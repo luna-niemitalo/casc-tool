@@ -24,7 +24,46 @@ only to hack on it.
    `m2mod/mappings/listfile.csv`; keep it fresh with
    `nu ../../scripts/update-listfile.nu`.
 
-## Building
+## Installing (as a Nix package)
+
+This is a real flake package, not just a compilable source tree — `nix/flake.nix`
+exposes `packages.default` and `apps.default`, so it's installable/runnable
+the same way any other flake-packaged CLI tool is, without needing this repo
+checked out at all:
+
+```
+nix run github:<you>/casc-tool -- --help          # try it without installing
+nix profile install github:<you>/casc-tool         # install to your user profile
+```
+
+Or as an input to another flake (e.g. a home-manager config):
+
+```nix
+{
+  inputs.casc-tool.url = "github:<you>/casc-tool";
+  # ...
+  home.packages = [ inputs.casc-tool.packages.${pkgs.system}.default ];
+}
+```
+
+(Replace `<you>/casc-tool` with wherever this ends up pushed — see the note
+about network writes in the parent project if you're doing that from
+within an assistant session; pushing is something only you do.)
+
+**Why this needed more than "just cmake":** CascLib is vendored as a git
+submodule for local dev, but a submodule's actual file contents aren't part
+of what `git ls-files` reports for the parent repo (only a gitlink entry
+is) — so a plain `nix build` of the flake's own source wouldn't have seen
+it. The fix was to fetch CascLib as its own separate flake input instead
+(pinned via the normal flake-lock mechanism, currently
+`ladislav-zezula/CascLib` commit `4d6258f`) and splice it into
+`vendor/CascLib` during the build, rather than depending on the consumer
+remembering `?submodules=1` on a `github:` reference to *this* repo. The
+package source itself is filtered down to exactly `CMakeLists.txt` + `src/`
+via `lib.fileset` — `tests/`, `build/`, and `.git` never enter the Nix store
+for this build at all.
+
+## Building (from source, for development)
 
 From this directory (`tools/casc-tool/`), inside the project's Nix dev shell
 (`direnv exec .` from the repo root, or `nix develop ./nix -c bash` first):
@@ -143,6 +182,75 @@ as [wow.tools's tactkeys API](https://wow.tools/api.php?type=tactkeys): one
 `--locale <name>` (see `casc-tool list --help` for the list of names); the
 default `all` should normally already cover this, but voice-over audio in
 particular is locale-gated.
+
+## Testing
+
+Uses [doctest](https://github.com/doctest/doctest) (via nixpkgs — no
+vendoring needed for this one). Two tiers, split by whether they need a real
+CASC storage:
+
+- **Pure-logic tests** (`tests/test_cli.cpp`, `test_format.cpp`,
+  `test_storage.cpp`, `test_listfile.cpp`) — argument parsing, csv/json
+  escaping, locale-name parsing, error-message mapping, listfile
+  loading/diffing. No external dependencies, always run, exhaustive by
+  design (every documented behavior of these modules has a test, not just
+  the happy path).
+- **Integration tests** (`tests/test_integration.cpp`) — run the actual
+  compiled `casc-tool` binary as a subprocess against a real CASC storage
+  and check its stdout/stderr/exit code. Deliberately not mocked: CascLib's
+  real behavior is exactly what caught two real bugs during manual testing
+  (see below), and a mock would have hidden both.
+
+```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build -j$(nproc)
+./build/casc-tool-tests                    # pure-logic tests only; integration tests skip themselves
+```
+
+To actually run the integration tests, point two environment variables at a
+real storage and a matching listfile (from the parent `wow_modding` project,
+after `nu scripts/external-data.nu mount`, that's its `external_data/` and
+`m2mod/mappings/listfile.csv`):
+
+```
+CASC_TOOL_TEST_STORAGE=/path/to/external_data \
+CASC_TOOL_TEST_LISTFILE=/path/to/listfile.csv \
+  ./build/casc-tool-tests
+```
+
+Without those set, every integration test logs `SKIPPED (no real storage
+available)` and doctest counts it as passed rather than failed — a
+deliberate tradeoff (see the top-level project's notes on why a synthetic
+CASC fixture wasn't built): the suite stays runnable anywhere, but a fully
+green run without the env vars set only means "the pure logic is fine," not
+"verified end to end." Set the env vars to get the real signal.
+
+**What the integration suite actually found, testing against the real, live
+122GB install** (this is the point of writing tests this way instead of
+only unit-testing in isolation):
+
+- `list --format csv|json` silently ignoring `--limit` (now fixed, and
+  regression-tested).
+- `info`/`extract` by path failing for files `list` had just resolved by
+  name (now fixed — `storage::openFile` always resolves through
+  `CascFindFirstFile` first — and regression-tested with a byte-identical
+  by-path-vs-by-ID comparison).
+- **Three still-open gaps**, currently failing on purpose (encoding the
+  *intended* behavior, not the current one — per the project's testing
+  philosophy, a red test here is doing its job, not a mistake):
+  1. A nonexistent `--listfile` path isn't reported as a listfile problem
+     specifically — it's indistinguishable from the target file itself not
+     existing.
+  2. A FileDataID/path that resolves in the listfile but has no locally
+     available data (e.g. an uninstalled legacy cinematic) produces the
+     same generic "No such file or directory" as everything else, instead
+     of saying it's known-but-not-installed.
+  3. A path that isn't in the listfile at all and a FileDataID that doesn't
+     exist in CASC at all currently produce the *literal same* message
+     template (`couldn't open '<X>': No such file or directory`) — verified
+     by normalizing the echoed subject out of both messages before
+     comparing, specifically to rule out "they only look different because
+     they mention different inputs" as a false positive.
 
 ## Design notes (for anyone extending this)
 

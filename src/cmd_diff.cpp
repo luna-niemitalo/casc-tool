@@ -1,12 +1,11 @@
 #include <cstdio>
-#include <fstream>
-#include <map>
 #include <string>
 #include <vector>
 
 #include "cli.hpp"
 #include "commands.hpp"
 #include "format.hpp"
+#include "listfile.hpp"
 
 namespace commands {
 
@@ -19,34 +18,6 @@ std::vector<cli::OptionSpec> specs() {
 }
 
 const char* kUsage = "casc-tool diff <listfile-a> <listfile-b> [options]";
-
-// Parses a wow-listfile-style CSV: "FileDataId;FullFileName" per line.
-// Deliberately doesn't reuse CascLib's own listfile parser here -- this
-// command never opens a storage, and the format is simple enough (one
-// split on the first ';') that pulling CascLib in for it would be backwards.
-std::map<unsigned, std::string> loadListfile(const std::string& path, std::string* error) {
-    std::map<unsigned, std::string> entries;
-    std::ifstream in(path);
-    if (!in) {
-        *error = "couldn't open '" + path + "'";
-        return entries;
-    }
-    std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty()) continue;
-        auto sep = line.find(';');
-        if (sep == std::string::npos) continue;
-        try {
-            unsigned id = static_cast<unsigned>(std::stoul(line.substr(0, sep)));
-            std::string name = line.substr(sep + 1);
-            if (!name.empty() && name.back() == '\r') name.pop_back();
-            entries[id] = name;
-        } catch (const std::exception&) {
-            continue;  // malformed line, skip rather than abort a multi-million-line file
-        }
-    }
-    return entries;
-}
 
 }  // namespace
 
@@ -85,35 +56,18 @@ int runDiff(const std::vector<std::string>& rawArgs) {
     }
 
     std::string error;
-    auto a = loadListfile(args.positionals()[0], &error);
+    auto a = listfile::load(args.positionals()[0], &error);
     if (!error.empty()) {
         std::fprintf(stderr, "error: %s\n", error.c_str());
         return 1;
     }
-    auto b = loadListfile(args.positionals()[1], &error);
+    auto b = listfile::load(args.positionals()[1], &error);
     if (!error.empty()) {
         std::fprintf(stderr, "error: %s\n", error.c_str());
         return 1;
     }
 
-    struct Change {
-        unsigned id;
-        char kind;  // 'A' added, 'R' removed, 'C' changed (renamed)
-        std::string oldName, newName;
-    };
-    std::vector<Change> changes;
-
-    for (const auto& [id, name] : b) {
-        auto it = a.find(id);
-        if (it == a.end()) {
-            changes.push_back({id, 'A', "", name});
-        } else if (it->second != name) {
-            changes.push_back({id, 'C', it->second, name});
-        }
-    }
-    for (const auto& [id, name] : a) {
-        if (b.find(id) == b.end()) changes.push_back({id, 'R', name, ""});
-    }
+    auto changes = listfile::diff(a, b);
 
     if (fmt == "csv") {
         std::printf("fdid,change,old_name,new_name\n");
