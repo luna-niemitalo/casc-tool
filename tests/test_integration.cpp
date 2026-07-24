@@ -4,13 +4,13 @@
 // exactly what caught the two real bugs during manual testing, and a mock
 // would have hidden both of them.
 //
-// Requires two environment variables (set by whoever runs the suite, e.g.
-// the parent wow_modding project after mounting its real install):
+// Requires two environment variables (set by whoever runs the suite):
 //   CASC_TOOL_TEST_STORAGE   a real CASC storage root (contains .build.info)
-//   CASC_TOOL_TEST_LISTFILE  a matching listfile.csv
+//   CASC_TOOL_TEST_LISTFILE  a matching listfile.csv (see README.md for
+//                            where to get one)
 // Every test below skips itself (with a logged reason, not a failure) if
 // these aren't set, so the suite stays runnable without a real WoW install
-// -- see tools/casc-tool/README.md's Testing section for the tradeoff.
+// -- see README.md's Testing section for the tradeoff.
 //
 // Some of these tests encode the *intended* behavior of casc-tool rather
 // than its current behavior, deliberately -- see the top-level project's

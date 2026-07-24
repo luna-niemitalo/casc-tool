@@ -39,15 +39,15 @@ TEST_CASE("boolean flag is false when absent, true when present") {
 }
 
 TEST_CASE("value option accepts space-separated syntax") {
-    cli::Args args({"--storage", "external_data"}, testSpecs());
+    cli::Args args({"--storage", "/some/path"}, testSpecs());
     REQUIRE(args.option("--storage").has_value());
-    CHECK(*args.option("--storage") == "external_data");
+    CHECK(*args.option("--storage") == "/some/path");
 }
 
 TEST_CASE("value option accepts --name=value inline syntax") {
-    cli::Args args({"--storage=external_data"}, testSpecs());
+    cli::Args args({"--storage=/some/path"}, testSpecs());
     REQUIRE(args.option("--storage").has_value());
-    CHECK(*args.option("--storage") == "external_data");
+    CHECK(*args.option("--storage") == "/some/path");
 }
 
 TEST_CASE("space-separated and inline forms of the same option produce the same value") {
@@ -58,12 +58,12 @@ TEST_CASE("space-separated and inline forms of the same option produce the same 
 
 TEST_CASE("optionOr returns the fallback when the option wasn't given") {
     cli::Args args({}, testSpecs());
-    CHECK(args.optionOr("--storage", "external_data") == "external_data");
+    CHECK(args.optionOr("--storage", "default-path") == "default-path");
 }
 
 TEST_CASE("optionOr returns the actual value when the option was given") {
     cli::Args args({"--storage", "somewhere"}, testSpecs());
-    CHECK(args.optionOr("--storage", "external_data") == "somewhere");
+    CHECK(args.optionOr("--storage", "default-path") == "somewhere");
 }
 
 TEST_CASE("unknown option is rejected with a message naming the option") {

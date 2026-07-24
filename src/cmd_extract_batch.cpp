@@ -70,14 +70,22 @@ int runExtractBatch(const std::vector<std::string>& rawArgs) {
     bool unresolvedOnly = args.flag("--unresolved-only");
     bool dryRun = args.flag("--dry-run");
 
+    std::string listFileError;
+    if (!storage::checkListFileExists(listFile, &listFileError)) {
+        std::fprintf(stderr, "error: %s\n", listFileError.c_str());
+        return 1;
+    }
+
     storage::StorageHandle hStorage;
     if (!storage::open(storage::fromArgs(args), hStorage)) return 1;
 
-    CASC_FIND_DATA fd;
+    CASC_FIND_DATA fd{};
     storage::FindHandle hFind(CascFindFirstFile(hStorage.get(), mask.c_str(), &fd, listFile.c_str()));
-    if (!hFind) {
-        std::fprintf(stderr, "error: no files matched '%s': %s\n", mask.c_str(),
-                     storage::errorMessage(GetCascError()).c_str());
+    // See storage::openFile's comment: a literal (non-wildcard) mask
+    // matching nothing has been observed to still return a non-null handle
+    // with fd left holding CASC_INVALID_ID/garbage.
+    if (!hFind || fd.dwFileDataId == CASC_INVALID_ID) {
+        std::fprintf(stderr, "error: no files matched '%s'\n", mask.c_str());
         return 1;
     }
 

@@ -55,15 +55,19 @@ void printTopLevelHelp() {
     std::printf(
         "\n"
         "quick start:\n"
-        "  1. Mount the real game install read-only: nu scripts/external-data.nu mount\n"
-        "  2. List what's in it:                     casc-tool list --limit 10\n"
-        "  3. Pull one file out:                      casc-tool extract <path-or-id>\n"
+        "  1. Point --storage at a directory containing .build.info (your WoW\n"
+        "     install, or a read-only copy of it -- see README.md for why a copy\n"
+        "     is a good idea).\n"
+        "  2. Get a listfile (FileDataID <-> path mapping) from\n"
+        "     https://github.com/wowdev/wow-listfile/releases -- download\n"
+        "     community-listfile.csv and pass it as --listfile.\n"
+        "  3. List what's in it:  casc-tool list --limit 10\n"
+        "  4. Pull one file out:  casc-tool extract <path-or-id>\n"
         "\n"
-        "Every command defaults to --storage external_data and\n"
-        "--listfile m2mod/mappings/listfile.csv (this project's usual layout) --\n"
-        "run from the repository root, or pass --storage/--listfile explicitly.\n"
-        "See README.md for the full picture (why external_data exists, what CASC\n"
-        "is, how the listfile works).\n");
+        "--storage defaults to '.' and --listfile to 'listfile.csv', both in the\n"
+        "current directory -- pass --storage/--listfile explicitly to use\n"
+        "anything else. See README.md for the full picture (what CASC is, how\n"
+        "the listfile works, troubleshooting).\n");
 }
 
 }  // namespace

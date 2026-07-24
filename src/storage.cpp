@@ -124,8 +124,8 @@ std::string errorMessage(uint32_t cascError) {
 
 std::vector<cli::OptionSpec> commonOptionSpecs() {
     return {
-        {"--storage", true, "<path>", "CASC storage root (a directory containing .build.info). Default: external_data"},
-        {"--listfile", true, "<path>", "FileDataID<->path mapping, e.g. wow-listfile's community-listfile.csv. Default: m2mod/mappings/listfile.csv"},
+        {"--storage", true, "<path>", "CASC storage root (a directory containing .build.info). Default: . (current directory)"},
+        {"--listfile", true, "<path>", "FileDataID<->path mapping, e.g. wow-listfile's community-listfile.csv. Default: listfile.csv (current directory)"},
         {"--locale", true, "<name>", "One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw"},
         {"--keys", true, "<path>", "Optional TACT decryption keys file (same format as wow.tools's tactkeys API: 'KeyName KeyValue' hex pairs, one per line)"},
         {"--product", true, "<codename>", "Optional product codename, for installs with more than one flavor (e.g. 'wow', 'wowt' for PTR)"},
@@ -134,7 +134,7 @@ std::vector<cli::OptionSpec> commonOptionSpecs() {
 
 OpenOptions fromArgs(const cli::Args& args) {
     OpenOptions opts;
-    opts.path = args.optionOr("--storage", "external_data");
+    opts.path = args.optionOr("--storage", ".");
     opts.locale = args.optionOr("--locale", "all");
     opts.keysFile = args.option("--keys");
     opts.product = args.option("--product");
@@ -142,7 +142,7 @@ OpenOptions fromArgs(const cli::Args& args) {
 }
 
 std::string listFileFromArgs(const cli::Args& args) {
-    return args.optionOr("--listfile", "m2mod/mappings/listfile.csv");
+    return args.optionOr("--listfile", "listfile.csv");
 }
 
 bool looksLikeFileDataId(const std::string& s) {
@@ -153,23 +153,71 @@ bool looksLikeFileDataId(const std::string& s) {
     return true;
 }
 
-bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, FileHandle& out) {
+bool checkListFileExists(const std::string& path, std::string* errorOut) {
+    if (std::filesystem::exists(path)) return true;
+    *errorOut = "listfile not found: '" + path + "'";
+    return false;
+}
+
+bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, FileHandle& out,
+              std::string* errorOut) {
     DWORD fileDataId;
 
     if (looksLikeFileDataId(idOrPath)) {
         fileDataId = static_cast<DWORD>(std::stoul(idOrPath));
     } else {
-        CASC_FIND_DATA fd;
+        if (!checkListFileExists(listFile, errorOut)) return false;
+
+        CASC_FIND_DATA fd{};
         HANDLE hFindRaw = CascFindFirstFile(hStorage, idOrPath.c_str(), &fd, listFile.c_str());
-        if (!hFindRaw) return false;
+        // A literal (non-wildcard) mask that matches nothing has been
+        // observed to still return a non-null handle, with `fd` left
+        // holding CASC_INVALID_ID/garbage rather than CascLib reporting no
+        // match cleanly -- confirmed by hand (fdid=4294967295,
+        // size=18446744073709551615). Treat that the same as a null handle
+        // instead of trusting it.
+        bool noRealMatch = !hFindRaw || fd.dwFileDataId == CASC_INVALID_ID;
+        if (noRealMatch) {
+            if (hFindRaw) CascFindClose(hFindRaw);
+            *errorOut = "no file named '" + idOrPath +
+                        "' found (not in the listfile -- check the path is right, or that "
+                        "--listfile is up to date)";
+            return false;
+        }
         FindHandle hFind(hFindRaw);
         fileDataId = fd.dwFileDataId;
+
+        if (!fd.bFileAvailable) {
+            *errorOut = "'" + idOrPath + "' (FileDataID " + std::to_string(fileDataId) +
+                        ") is known but its data isn't available in this local install "
+                        "(likely optional/legacy content that was never downloaded)";
+            return false;
+        }
     }
 
     HANDLE h = nullptr;
-    bool ok = CascOpenFile(hStorage, CASC_FILE_DATA_ID(fileDataId), CASC_LOCALE_ALL, CASC_OPEN_BY_FILEID, &h);
-    if (ok) out.reset(h);
-    return ok;
+    if (!CascOpenFile(hStorage, CASC_FILE_DATA_ID(fileDataId), CASC_LOCALE_ALL, CASC_OPEN_BY_FILEID, &h)) {
+        *errorOut = "no file with FileDataID " + std::to_string(fileDataId) + " exists in this storage";
+        return false;
+    }
+    FileHandle candidate(h);
+
+    // A bare-ID lookup skips the Find/bFileAvailable check above entirely,
+    // so even a FileDataID CascOpenFile accepted can still point at data
+    // this local install never downloaded. Confirm it's actually readable
+    // before declaring success, instead of letting the caller discover that
+    // later via a generic CascGetFileInfo/CascReadFile failure.
+    CASC_FILE_FULL_INFO info;
+    size_t needed = 0;
+    if (!CascGetFileInfo(candidate.get(), CascFileFullInfo, &info, sizeof(info), &needed)) {
+        *errorOut = "FileDataID " + std::to_string(fileDataId) +
+                    " is known but its data isn't available in this local install "
+                    "(likely optional/legacy content that was never downloaded)";
+        return false;
+    }
+
+    out = std::move(candidate);
+    return true;
 }
 
 bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut) {

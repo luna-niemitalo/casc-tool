@@ -59,7 +59,7 @@ using FindHandle = Handle<CascFindClose>;
 // OptionSpec list includes these (see commands.hpp) so --help stays
 // consistent across list/info/extract/extract-batch.
 struct OpenOptions {
-    std::string path;                  // storage root, e.g. "external_data"
+    std::string path;                  // storage root: a directory containing .build.info
     std::string locale = "all";        // human name, see parseLocale()
     std::optional<std::string> keysFile;  // TACT-keys-format file, see README
     std::optional<std::string> product;   // codename, for multi-product installs
@@ -98,16 +98,35 @@ std::string errorMessage(uint32_t cascError);
 // apart from a path on the command line ("info 1234" vs "info some/path.m2").
 bool looksLikeFileDataId(const std::string& s);
 
+// Checks that `path` (a --listfile value) actually exists, producing a
+// message that specifically names the *listfile* as the problem. Split out
+// so list/extract-batch (which call CascFindFirstFile directly) and
+// openFile (below) all give the same clear answer instead of a bad
+// --listfile path silently degrading into "file not found" for whatever
+// was actually being looked up.
+bool checkListFileExists(const std::string& path, std::string* errorOut);
+
 // Opens a file given either a FileDataID (all-digit string) or an in-storage
-// path. Note this always resolves through a FileDataID lookup, even for
-// paths: WoW's CASC root stores name *hashes*, not names, so CascOpenFile's
-// by-name mode only succeeds for names CascLib has already learned via a
-// Find pass on this same handle (confirmed empirically -- opening a file
-// that `list` had just resolved by name, without going through Find first,
-// failed with ERROR_FILE_NOT_FOUND). Resolving the path to a FileDataID via
-// CascFindFirstFile(exact path, listFile) first and then opening by ID
-// sidesteps that entirely and is what every other command already does.
-bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, FileHandle& out);
+// path, and reports *why* on failure via *errorOut rather than a single
+// generic message for every possible cause. Distinguishes:
+//   - the listfile itself doesn't exist
+//   - the path isn't in the listfile at all (CascFindFirstFile found no match)
+//   - the name/ID is known to CASC but its data isn't in this local install
+//     (checked via CASC_FIND_DATA::bFileAvailable for a path, and via a
+//     CascGetFileInfo probe right after opening for a bare ID, since an
+//     ID-based lookup skips the Find call entirely and so never gets a
+//     bFileAvailable answer up front)
+//   - the FileDataID doesn't exist in this storage at all (CascOpenFile
+//     itself rejects it, as opposed to opening fine and failing later)
+//
+// Also note this always resolves paths through a FileDataID lookup rather
+// than CascOpenFile's own by-name mode: WoW's CASC root stores name
+// *hashes*, not names, so by-name open only succeeds for names CascLib has
+// already learned via a Find pass on this same handle (confirmed
+// empirically -- opening a file `list` had just resolved by name, without
+// going through Find first, failed with ERROR_FILE_NOT_FOUND).
+bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, FileHandle& out,
+              std::string* errorOut);
 
 // Streams an already-open file to disk in chunks, creating parent
 // directories as needed. Shared by `extract` and `extract-batch` so the

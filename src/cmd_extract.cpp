@@ -68,9 +68,9 @@ int runExtract(const std::vector<std::string>& rawArgs) {
     if (!storage::open(storage::fromArgs(args), hStorage)) return 1;
 
     storage::FileHandle hFile;
-    if (!storage::openFile(hStorage.get(), idOrPath, storage::listFileFromArgs(args), hFile)) {
-        std::fprintf(stderr, "error: couldn't open '%s': %s\n", idOrPath.c_str(),
-                     storage::errorMessage(GetCascError()).c_str());
+    std::string openError;
+    if (!storage::openFile(hStorage.get(), idOrPath, storage::listFileFromArgs(args), hFile, &openError)) {
+        std::fprintf(stderr, "error: %s\n", openError.c_str());
         return 1;
     }
 

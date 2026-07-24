@@ -7,22 +7,29 @@ you've used `wow.export`'s file browser before, this is the same underlying
 job, but as a scriptable CLI with no GUI/Chromium runtime attached.
 
 If you're new to both WoW modding *and* the command line: every command
-below is copy-pasteable as written, from the repository root
-(`wow_modding/`), on Linux. You don't need to know C++ to use this tool —
-only to hack on it.
+below is copy-pasteable as written, on Linux. You don't need to know C++ to
+use this tool — only to hack on it.
+
+This tool is standalone — it doesn't assume any other project's directory
+layout, scripts, or tooling. Everything you need to get it running is
+listed below or fetched from its own actual upstream source.
 
 ## What you need before any of this works
 
-1. **A build of the tool.** See "Building" below.
+1. **A build of the tool.** See "Installing"/"Building" below.
 2. **A WoW install to actually read.** This tool never downloads game data
-   itself — see the top-level [README.md §3](../../README.md#3-whats-needed-from-the-internet-from-where-and-how-to-update)
-   for why, and [§2.1](../../README.md#21-external_data--protected-access-to-the-real-game-install)
-   for how it gets made available here as `external_data/`.
+   itself, and never writes to the one you point it at — it only opens
+   files for reading. `--storage` just needs to point at a directory
+   containing a `.build.info` file (that's the real WoW install root, e.g.
+   wherever Battle.net installed it, or a copy of it). If you'd rather not
+   point this tool at your live install directly, mount/copy it read-only
+   somewhere first — how you do that is up to you and your OS; this repo
+   doesn't prescribe a mechanism.
 3. **A listfile.** CASC identifies files by number (`FileDataID`), not by
    name — the listfile is what maps `1234` to
-   `character/bloodelf/female/bloodelffemale.m2`. One's already vendored at
-   `m2mod/mappings/listfile.csv`; keep it fresh with
-   `nu ../../scripts/update-listfile.nu`.
+   `character/bloodelf/female/bloodelffemale.m2`. Get one from its actual
+   upstream source: [wowdev/wow-listfile releases](https://github.com/wowdev/wow-listfile/releases) —
+   download `community-listfile.csv` and pass it as `--listfile`.
 
 ## Installing (as a Nix package)
 
@@ -32,23 +39,19 @@ the same way any other flake-packaged CLI tool is, without needing this repo
 checked out at all:
 
 ```
-nix run github:<you>/casc-tool -- --help          # try it without installing
-nix profile install github:<you>/casc-tool         # install to your user profile
+nix run github:luna-niemitalo/casc-tool -- --help          # try it without installing
+nix profile install github:luna-niemitalo/casc-tool         # install to your user profile
 ```
 
 Or as an input to another flake (e.g. a home-manager config):
 
 ```nix
 {
-  inputs.casc-tool.url = "github:<you>/casc-tool";
+  inputs.casc-tool.url = "github:luna-niemitalo/casc-tool";
   # ...
   home.packages = [ inputs.casc-tool.packages.${pkgs.system}.default ];
 }
 ```
-
-(Replace `<you>/casc-tool` with wherever this ends up pushed — see the note
-about network writes in the parent project if you're doing that from
-within an assistant session; pushing is something only you do.)
 
 **Why this needed more than "just cmake":** CascLib is vendored as a git
 submodule for local dev, but a submodule's actual file contents aren't part
@@ -94,24 +97,19 @@ The rest of this document assumes you've done that and can just type
 ## Quick start
 
 ```
-# 1. Make the real game install available, read-only, at ./external_data
-#    (run once per session/reboot; see the top-level README for what this
-#    actually does and why)
-nu scripts/external-data.nu mount        # from the repo root
+cd /path/to/your/wow/install    # the directory containing .build.info
+cp /wherever/you/downloaded/community-listfile.csv ./listfile.csv
 
-# 2. See what's in it
 casc-tool list --limit 10
-
-# 3. Pull one file out, by path or by FileDataID -- both work everywhere
 casc-tool extract character/bloodelf/female/bloodelffemale.m2
-casc-tool extract 116921
+casc-tool extract 116921         # by path or by FileDataID -- both work everywhere
 ```
 
-Every command that touches a storage defaults to `--storage external_data
---listfile m2mod/mappings/listfile.csv` — this project's usual layout — so
-none of the examples above need those flags spelled out, as long as you run
-from the repository root. Run from elsewhere, or against a different
-install, and just add `--storage <path> --listfile <path>`.
+`--storage` defaults to `.` and `--listfile` to `listfile.csv`, both
+relative to the current directory — that's why the quick start above `cd`s
+into the install first. Working from somewhere else, or against multiple
+installs? Pass `--storage <path> --listfile <path>` explicitly; nothing
+above requires being run from any particular directory.
 
 `casc-tool --help` and `casc-tool <command> --help` are always up to date
 and slightly more terse than this document; use this README for the *why*,
@@ -146,10 +144,9 @@ for a command's exact options. Summary of what each is for:
 
 - **`diff <listfile-a> <listfile-b>`** — compare two listfile snapshots and
   report FileDataIDs added, removed, or renamed. Doesn't touch any storage —
-  pure listfile-to-listfile comparison. Pairs naturally with
-  `scripts/update-listfile.nu`, which leaves the previous listfile behind as
-  `listfile.csv.old_<timestamp>` specifically so you can diff against it
-  and see what a patch actually changed.
+  pure listfile-to-listfile comparison. Useful for "what did this patch
+  actually add" if you keep old listfile downloads around before replacing
+  them with a fresh one.
 
 Every storage-touching command shares the same five options:
 `--storage`, `--listfile`, `--locale`, `--keys`, `--product` — run any
@@ -160,9 +157,8 @@ identically everywhere.
 
 **"couldn't open storage ... : No such file or directory"** — the path you
 gave `--storage` doesn't contain a `.build.info` file, i.e. it's not
-actually a WoW install root. If you're using the project's usual layout,
-make sure you ran `nu scripts/external-data.nu mount` first
-(`nu scripts/external-data.nu status` tells you if it's currently mounted).
+actually a WoW install root. Remember it also defaults to `.` (the current
+directory) if you don't pass `--storage` at all.
 
 **A file `list`/`info` shows exists, but `extract` fails with "No such file
 or directory"** — some FileDataIDs (older cinematics in particular) simply
@@ -170,7 +166,7 @@ aren't shipped in every install; the listfile knows a name for them, but
 your local copy of the game never downloaded the actual bytes. This is
 normal, not a bug in this tool — there isn't a local-storage way around it
 short of installing more of the game (or, later, this tool's planned
-CDN/online mode — see the top-level README's roadmap).
+CDN/online mode — see "Design notes" below).
 
 **"file is encrypted and the decryption key is missing"** — some CASC
 content is genuinely encrypted client-side; without the matching key it's
@@ -208,22 +204,23 @@ cmake --build build -j$(nproc)
 ```
 
 To actually run the integration tests, point two environment variables at a
-real storage and a matching listfile (from the parent `wow_modding` project,
-after `nu scripts/external-data.nu mount`, that's its `external_data/` and
-`m2mod/mappings/listfile.csv`):
+real WoW install and a listfile (see "What you need before any of this
+works" above for where to get one):
 
 ```
-CASC_TOOL_TEST_STORAGE=/path/to/external_data \
+CASC_TOOL_TEST_STORAGE=/path/to/your/wow/install \
 CASC_TOOL_TEST_LISTFILE=/path/to/listfile.csv \
   ./build/casc-tool-tests
 ```
 
 Without those set, every integration test logs `SKIPPED (no real storage
 available)` and doctest counts it as passed rather than failed — a
-deliberate tradeoff (see the top-level project's notes on why a synthetic
-CASC fixture wasn't built): the suite stays runnable anywhere, but a fully
-green run without the env vars set only means "the pure logic is fine," not
-"verified end to end." Set the env vars to get the real signal.
+deliberate tradeoff, given a synthetic CASC fixture would be real
+engineering effort in its own right (CascLib's own test suite doesn't ship
+one either — it just runs against real, large game installs): the suite
+stays runnable anywhere, but a fully green run without the env vars set only
+means "the pure logic is fine," not "verified end to end." Set the env vars
+to get the real signal.
 
 **What the integration suite actually found, testing against the real, live
 122GB install** (this is the point of writing tests this way instead of
@@ -271,10 +268,32 @@ only unit-testing in isolation):
   with `ERROR_FILE_NOT_FOUND` — confirmed with `strace` before landing on
   the current approach. See the comment on `storage::openFile` in
   `src/storage.hpp`.
-- **Why an overlay mount and not a read-only bind mount** for
-  `external_data/` — also found empirically (CascLib opens `.build.info`
-  `O_RDWR` as an internal probe even though it never persists anything) —
-  is documented in the top-level README, not repeated here.
+- **If you're pointing `--storage` at a read-only mount/copy of your install
+  rather than the live one directly**, be aware CascLib opens `.build.info`
+  (and a couple of other storage-detection files) with `O_RDWR` as an
+  internal probe, even though it never actually persists anything through
+  that handle — found empirically via `strace`. A strictly read-only mount
+  (e.g. `mount -o ro` or `bindfs -o ro`) will make that open fail with
+  `EROFS` and `CascOpenStorage` will report "not found," which is confusing
+  the first time you hit it. A copy-on-write overlay (real data as the
+  lowerdir, which overlayfs never writes to, with a disposable upper layer
+  absorbing CascLib's harmless probe-writes) sidesteps this while still
+  fully protecting the real install — that's the mechanism to reach for if
+  you want both protection and compatibility.
+- **Planned, not yet built:** online/CDN (TACT) access, to pull straight
+  from Blizzard's CDN without a full local install. A genuinely different
+  code path from local-storage reading — worth keeping separate rather than
+  conflating the two just because they'd share a CLI.
+- **Not planned, by decision, not just deferred:** writing back into CASC
+  or injecting modified assets. Not a goal of this tool, and not even a
+  well-documented path upstream in CascLib itself.
 - No plugin system, no config file, no TUI. If a future need doesn't fit
   "one verb, a few flags, text/csv/json out," that's a sign to reconsider
   the need, not to bolt on a bigger parser.
+
+## Disclaimer
+
+This tool was co-coded by AI. It's verified by a massively autistic
+developer — every claim in this README (the empirical findings, the test
+results, the failure modes) was checked against the real thing, not taken
+on faith.

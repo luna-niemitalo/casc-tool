@@ -27,14 +27,14 @@ void helpDiff() {
         "\n"
         "usage: %s\n"
         "\n"
-        "  <listfile-a>   older snapshot, e.g. one of the\n"
-        "                 listfile.csv.old_<timestamp> files scripts/update-listfile.nu\n"
-        "                 leaves behind\n"
-        "  <listfile-b>   newer snapshot, e.g. the current listfile.csv\n"
+        "  <listfile-a>   older snapshot, e.g. a listfile.csv you downloaded\n"
+        "                 a while ago and kept around\n"
+        "  <listfile-b>   newer snapshot, e.g. a freshly downloaded one\n"
         "\n"
         "Reports FileDataIDs added, removed, or renamed between the two -- e.g.\n"
-        "\"what did this patch actually add\" after running scripts/update-listfile.nu.\n"
-        "Doesn't touch any CASC storage; this is pure listfile-to-listfile comparison.\n"
+        "\"what did this patch actually add,\" if you archive listfiles somewhere\n"
+        "before updating them. Doesn't touch any CASC storage; this is pure\n"
+        "listfile-to-listfile comparison.\n"
         "\n"
         "options:\n",
         kUsage);
@@ -42,8 +42,7 @@ void helpDiff() {
     std::printf(
         "\n"
         "example:\n"
-        "  casc-tool diff m2mod/mappings/listfile.csv.old_20260724T110000 \\\n"
-        "                 m2mod/mappings/listfile.csv\n");
+        "  casc-tool diff listfile.csv.old listfile.csv\n");
 }
 
 int runDiff(const std::vector<std::string>& rawArgs) {
