@@ -13,9 +13,10 @@
 // -- see README.md's Testing section for the tradeoff.
 //
 // Some of these tests encode the *intended* behavior of casc-tool rather
-// than its current behavior, deliberately -- see the top-level project's
-// notes on the descriptive-failure-message matrix. A red test here is doing
-// its job.
+// than its current behavior, deliberately -- see FAILURES.md for the current
+// set (bad --product, --listfile pointing at a directory, non-numeric/
+// negative --limit, --unresolved-only worklist purity). A red test here is
+// doing its job, not a mistake.
 
 #include <algorithm>
 #include <array>
@@ -223,9 +224,10 @@ TEST_SUITE("integration: descriptive failure messages") {
 // The four distinct ways a lookup can fail, per the real testing session:
 // listfile itself missing, name not in the listfile, name in the listfile
 // but the file's data isn't in this local install, and a FileDataID that
-// doesn't exist in CASC at all. Right now several of these collapse to the
-// same generic strerror(ENOENT) text -- these tests encode that they
-// SHOULDN'T, and are expected to fail until that's fixed.
+// doesn't exist in CASC at all. These used to collapse into the same
+// generic strerror(ENOENT) text; storage::openFile/checkListFileExists now
+// give each one a distinct message (see src/storage.cpp) and these are
+// regression tests for that, not red-by-design tests anymore.
 
 TEST_CASE("listfile path itself doesn't exist") {
     SKIP_WITHOUT_REAL_STORAGE();
@@ -337,6 +339,163 @@ TEST_CASE("dry-run's predicted count and bytes match the real run exactly") {
 }
 
 }  // TEST_SUITE("integration: extract-batch dry-run")
+
+TEST_SUITE("integration: --limit input validation") {
+// Regression tests for a bug found by hand: --limit is passed straight to
+// std::stol with no validation at all, in cmd_list.cpp, *before* --storage
+// or --listfile are ever touched -- so the first case here needs no real
+// storage and always runs, unlike every other suite in this file.
+
+TEST_CASE("a non-numeric --limit doesn't crash into a raw std::stol exception message") {
+    auto r = runCasc({"list", "--limit", "banana"});
+    CHECK(r.exitCode != 0);
+    CHECK_MESSAGE(r.err.find("stol") == std::string::npos,
+                  "expected a clear '--limit must be a number' style message, got the raw std::stol "
+                  "exception text instead:\n" << r.err);
+}
+
+TEST_CASE("a negative --limit doesn't silently show zero rows after a full scan") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    auto r = runCasc(withStorage({"list", "character/bloodelf/female/*", "--limit", "-5"}));
+    auto summary = parseListSummary(r.err);
+    CHECK_MESSAGE(summary.matched > 0, "sanity: the mask should still match real files");
+    CHECK_MESSAGE(summary.shown > 0,
+                  "--limit -5 shows 0 rows despite " << summary.matched << " real matches, with no "
+                  "error explaining why -- a negative --limit should be rejected, not silently "
+                  "truncated to 'show nothing'");
+}
+
+}  // TEST_SUITE("integration: --limit input validation")
+
+TEST_SUITE("integration: --product error message accuracy") {
+
+TEST_CASE("an invalid --product codename isn't blamed on the storage path") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    auto r = runCasc(withStorage({"list", "--limit", "1", "--product", "totally_bogus_product_xyz"}));
+    CHECK(r.exitCode != 0);
+    CHECK_MESSAGE(r.err.find(".build.info") == std::string::npos,
+                  "the storage path is valid -- --product is what's wrong -- but the error still "
+                  "blames a missing/bad storage path:\n" << r.err);
+}
+
+}  // TEST_SUITE("integration: --product error message accuracy")
+
+TEST_SUITE("integration: --listfile must be a file, not a directory") {
+
+TEST_CASE("passing a directory as --listfile is reported as a listfile problem, not silently accepted") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    auto r = runCasc({"list", "--limit", "1", "--storage", *testStorage(), "--listfile", *testStorage()});
+    CHECK_MESSAGE(r.exitCode != 0,
+                  "a directory isn't a valid listfile, but the tool exits 0 and silently reports "
+                  "every file as unresolved instead of erroring");
+    CHECK(r.err.find("listfile") != std::string::npos);
+}
+
+}  // TEST_SUITE("integration: --listfile must be a file, not a directory")
+
+TEST_SUITE("integration: --unresolved-only worklist purity") {
+// Regression test for a bug found by hand: on a real, fresh community
+// listfile, 98.5% of "--unresolved-only" output isn't unnamed FileDataIDs
+// at all -- it's CASC_INVALID_ID (0xFFFFFFFF) CKey/EKey-only storage
+// entries that were never nameable files in the first place, and can't be
+// opened by info/extract either. They don't belong in the documented
+// "worklist for growing the community listfile".
+
+TEST_CASE("--unresolved-only never reports CASC_INVALID_ID as if it were a real FileDataID") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    auto r = runCasc(withStorage({"list", "--unresolved-only", "--format", "csv", "--limit", "0"}));
+    REQUIRE(r.exitCode == 0);
+    CHECK_MESSAGE(r.out.find("4294967295,") == std::string::npos,
+                  "the 'unresolved' worklist includes entries with no FileDataID at all "
+                  "(CASC_INVALID_ID) -- these aren't nameable files and can't be opened by "
+                  "info/extract, so they don't belong in a listfile-contribution worklist");
+}
+
+}  // TEST_SUITE("integration: --unresolved-only worklist purity")
+
+TEST_SUITE("integration: --keys warn-and-continue behavior") {
+// Coverage gap found by hand: storage::open()'s "couldn't load --keys
+// file" branch (missing path, or a file that isn't in the expected
+// format) had no test anywhere. Both already behave reasonably --
+// warn and keep going rather than aborting -- these just pin that down.
+
+TEST_CASE("a missing --keys file warns by name and doesn't abort the command") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    auto r = runCasc(withStorage({"list", "--limit", "1", "--keys", "/definitely/does/not/exist/keys.txt"}));
+    CHECK(r.exitCode == 0);
+    CHECK(r.err.find("/definitely/does/not/exist/keys.txt") != std::string::npos);
+    CHECK(r.err.find("warning") != std::string::npos);
+}
+
+TEST_CASE("a malformed --keys file warns by name and doesn't abort the command") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    TempDir dir;
+    std::string keysPath = dir.string() + "/bad_keys.txt";
+    std::ofstream(keysPath) << "garbage not a key file\n";
+    auto r = runCasc(withStorage({"list", "--limit", "1", "--keys", keysPath}));
+    CHECK(r.exitCode == 0);
+    CHECK(r.err.find(keysPath) != std::string::npos);
+    CHECK(r.err.find("warning") != std::string::npos);
+}
+
+}  // TEST_SUITE("integration: --keys warn-and-continue behavior")
+
+TEST_SUITE("integration: info --format json structure") {
+// Coverage gap found by hand: none of info's/diff's csv/json branches had
+// any test, unit or integration -- only list's did (via the --limit
+// suite above). This and the diff suite below backfill that.
+
+TEST_CASE("info --format json emits one well-formed JSON object with the documented fields") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    auto r = runCasc(withStorage({"info", "character/bloodelf/female/bloodelffemale.m2", "--format", "json"}));
+    REQUIRE(r.exitCode == 0);
+    for (const char* field : {"\"fdid\"", "\"ckey\"", "\"ekey\"", "\"data_file\"", "\"content_size\"",
+                              "\"encoded_size\"", "\"span_count\"", "\"locale_flags\"", "\"content_flags\""}) {
+        CAPTURE(field);
+        CHECK(r.out.find(field) != std::string::npos);
+    }
+    CHECK(std::count(r.out.begin(), r.out.end(), '{') == 1);
+    CHECK(std::count(r.out.begin(), r.out.end(), '}') == 1);
+}
+
+}  // TEST_SUITE("integration: info --format json structure")
+
+TEST_SUITE("integration: diff --format json/csv structure") {
+// diff is pure listfile-to-listfile comparison -- no real storage needed
+// at all, unlike every other suite in this file.
+
+TEST_CASE("diff --format csv emits a header plus one row per change") {
+    TempDir dir;
+    std::string a = dir.string() + "/a.csv", b = dir.string() + "/b.csv";
+    std::ofstream(a) << "1;a.blp\n2;b.blp\n";
+    std::ofstream(b) << "1;a.blp\n3;c.blp\n";
+
+    auto r = runCasc({"diff", a, b, "--format", "csv"});
+    REQUIRE(r.exitCode == 0);
+    std::istringstream lines(r.out);
+    std::string header;
+    std::getline(lines, header);
+    CHECK(header == "fdid,change,old_name,new_name");
+    long rowCount = std::count(r.out.begin(), r.out.end(), '\n') - 1;
+    CHECK(rowCount == 2);  // one added (3), one removed (2)
+}
+
+TEST_CASE("diff --format json emits a JSON array with one object per change") {
+    TempDir dir;
+    std::string a = dir.string() + "/a.csv", b = dir.string() + "/b.csv";
+    std::ofstream(a) << "1;a.blp\n2;b.blp\n";
+    std::ofstream(b) << "1;a.blp\n3;c.blp\n";
+
+    auto r = runCasc({"diff", a, b, "--format", "json"});
+    REQUIRE(r.exitCode == 0);
+    CHECK(r.out.find('[') < r.out.find(']'));
+    CHECK(std::count(r.out.begin(), r.out.end(), '{') == 2);
+    CHECK(std::count(r.out.begin(), r.out.end(), '}') == 2);
+    CHECK(r.out.find("\"change\":\"A\"") != std::string::npos);
+    CHECK(r.out.find("\"change\":\"R\"") != std::string::npos);
+}
+
+}  // TEST_SUITE("integration: diff --format json/csv structure")
 
 TEST_SUITE("integration: open-by-path vs open-by-FileDataID") {
 // Regression test for the other real bug found manually: info/extract by

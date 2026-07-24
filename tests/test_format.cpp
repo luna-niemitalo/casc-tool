@@ -26,6 +26,29 @@ TEST_CASE("empty string stays empty") {
     CHECK(format::jsonEscape("") == "");
 }
 
+// Regression tests for a bug found by hand: jsonEscape only special-cases
+// '"', '\\', '\n', '\r', '\t'. Per RFC 8259, every C0 control character
+// (U+0000-U+001F) must be escaped in a JSON string -- the rest currently
+// pass through raw, which would emit invalid JSON if a listfile name ever
+// contained one of these bytes (not seen in today's real community
+// listfile, but nothing here guards against it).
+
+TEST_CASE("C0 control characters without a short escape become \\u00XX (RFC 8259)") {
+    CHECK(format::jsonEscape("\x01") == "\\u0001");
+    CHECK(format::jsonEscape("\x08") == "\\u0008");  // backspace
+    CHECK(format::jsonEscape("\x0c") == "\\u000c");  // form feed
+    CHECK(format::jsonEscape("\x1f") == "\\u001f");
+}
+
+TEST_CASE("every C0 control character except \\n \\r \\t is escaped somehow, never emitted raw") {
+    for (int c = 0; c <= 0x1F; c++) {
+        if (c == '\n' || c == '\r' || c == '\t') continue;
+        std::string input(1, static_cast<char>(c));
+        CAPTURE(c);
+        CHECK(format::jsonEscape(input) != input);
+    }
+}
+
 }  // TEST_SUITE("format::jsonEscape")
 
 TEST_SUITE("format::csvEscape") {

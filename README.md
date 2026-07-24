@@ -232,22 +232,30 @@ only unit-testing in isolation):
   name (now fixed — `storage::openFile` always resolves through
   `CascFindFirstFile` first — and regression-tested with a byte-identical
   by-path-vs-by-ID comparison).
-- **Three still-open gaps**, currently failing on purpose (encoding the
-  *intended* behavior, not the current one — per the project's testing
-  philosophy, a red test here is doing its job, not a mistake):
-  1. A nonexistent `--listfile` path isn't reported as a listfile problem
-     specifically — it's indistinguishable from the target file itself not
-     existing.
-  2. A FileDataID/path that resolves in the listfile but has no locally
-     available data (e.g. an uninstalled legacy cinematic) produces the
-     same generic "No such file or directory" as everything else, instead
-     of saying it's known-but-not-installed.
-  3. A path that isn't in the listfile at all and a FileDataID that doesn't
-     exist in CASC at all currently produce the *literal same* message
-     template (`couldn't open '<X>': No such file or directory`) — verified
-     by normalizing the echoed subject out of both messages before
-     comparing, specifically to rule out "they only look different because
-     they mention different inputs" as a false positive.
+- Three message-clarity gaps that used to collapse into the same generic
+  `strerror(ENOENT)` text — a nonexistent `--listfile` path, a
+  known-but-not-locally-available FileDataID/path, and a path/FileDataID
+  that plain doesn't exist in CASC at all, all indistinguishable from each
+  other. Now fixed (each gets its own message; see `storage::openFile`/
+  `storage::checkListFileExists` in `src/storage.cpp`) and regression-tested,
+  including a check that the three explanations are genuinely different
+  templates, not just different because they echo different input.
+
+A later, more thorough pass against the same real install (see
+`FAILURES.md` for the full write-up) found several more gaps, now
+regression-tested the same way (red until fixed, per the philosophy above):
+an invalid `--product` codename gets blamed on the storage path instead of
+being reported as a bad product; a directory passed as `--listfile` is
+silently accepted instead of erroring, with every file coming back
+"unresolved"; non-numeric/negative `--limit` either crashes into a raw
+`std::stol` message or silently no-ops after a full scan; and
+`--unresolved-only`'s "worklist" output includes CASC entries that have no
+FileDataID at all (`CASC_INVALID_ID`), which aren't nameable files and
+can't be opened by `info`/`extract` either. One item from that pass,
+`extract-batch`'s output-path construction never independently
+sanitizing `..`-style path-traversal components (it currently relies
+entirely on an internal, unstated CascLib invariant instead), is a known,
+accepted gap — see `FAILURES.md` item 12 for why it's being left as-is.
 
 ## Design notes (for anyone extending this)
 
