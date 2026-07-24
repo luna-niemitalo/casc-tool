@@ -78,7 +78,20 @@ bool open(const OpenOptions& opts, StorageHandle& out) {
     if (!ok) {
         std::fprintf(stderr, "error: couldn't open storage '%s': %s\n", opts.path.c_str(),
                      errorMessage(GetCascError()).c_str());
-        std::fprintf(stderr, "       (expecting a directory containing .build.info -- see README.md §2.1)\n");
+        // Only blame the storage path when it actually looks like the
+        // problem -- a bad --product (or any other CascOpenStorageEx
+        // failure with a perfectly valid path) used to get this exact same
+        // ".build.info" hint too, which is actively wrong when the path is
+        // fine (see FAILURES.md #4).
+        bool hasBuildInfo = std::filesystem::exists(std::filesystem::path(opts.path) / ".build.info");
+        if (!hasBuildInfo) {
+            std::fprintf(stderr, "       (expecting a directory containing .build.info -- see README.md §2.1)\n");
+        } else if (opts.product) {
+            std::fprintf(stderr,
+                         "       (the storage path itself looks fine -- check --product '%s' is a valid "
+                         "codename for this install)\n",
+                         opts.product->c_str());
+        }
         return false;
     }
     out.reset(h);
@@ -154,9 +167,15 @@ bool looksLikeFileDataId(const std::string& s) {
 }
 
 bool checkListFileExists(const std::string& path, std::string* errorOut) {
-    if (std::filesystem::exists(path)) return true;
-    *errorOut = "listfile not found: '" + path + "'";
-    return false;
+    if (!std::filesystem::exists(path)) {
+        *errorOut = "listfile not found: '" + path + "'";
+        return false;
+    }
+    if (!std::filesystem::is_regular_file(path)) {
+        *errorOut = "listfile '" + path + "' isn't a regular file (looks like a directory?)";
+        return false;
+    }
+    return true;
 }
 
 bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, FileHandle& out,

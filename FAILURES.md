@@ -72,7 +72,7 @@ red-by-design tests.
 
 ---
 
-## 2. [major] `list --unresolved-only` — the documented "listfile worklist" — is 98.5% non-file noise
+## 2. [major, fixed] `list --unresolved-only` — the documented "listfile worklist" — is 98.5% non-file noise
 
 README describes `--unresolved-only`:
 
@@ -110,14 +110,22 @@ a file that's 98.5% garbage for that purpose.
 entries with `dwFileDataId == CASC_INVALID_ID` before calling them part of
 the "unresolved FileDataID" worklist.
 
+**Status: fixed.** `cmd_list.cpp` now tracks entries with no FileDataID
+(`fd.dwFileDataId == CASC_INVALID_ID`) in a separate `skippedNoId` counter
+and excludes them from `--unresolved-only`'s matched/shown rows entirely,
+instead of counting them as part of the worklist. The stderr summary now
+surfaces the count instead of silently dropping it:
+`scanned 3190906 entries, 19992 matched, N shown, 1295274 skipped (no
+FileDataID -- not a nameable file)` — 19,992 matches the genuine
+"FileDataID known, name missing" count from the original investigation.
+
 **Test:** `tests/test_integration.cpp`, suite "integration: --unresolved-only
 worklist purity" → `"--unresolved-only never reports CASC_INVALID_ID as if
-it were a real FileDataID"`. **Red** — currently fails (real run found
-`4294967295,` rows in the CSV output).
+it were a real FileDataID"`. **Green** — passes against the real install.
 
 ---
 
-## 3. [major] Those same `fdid=4294967295` rows are displayed as if they were real, usable FileDataIDs, but nothing in the tool can act on them
+## 3. [major, fixed] Those same `fdid=4294967295` rows are displayed as if they were real, usable FileDataIDs, but nothing in the tool can act on them
 
 Following directly from #2: `list`'s text/csv/json output prints
 `CASC_INVALID_ID` (`4294967295`) in the exact same `fdid` column/field as a
@@ -142,22 +150,39 @@ from them) would print roughly 1.3 million `warning: ...` lines to stderr
 and inflate the "failed" counter by over a million, drowning out any
 genuinely actionable extraction failures in the same run.
 
-**Fix direction:** skip/report `CASC_INVALID_ID` entries distinctly (e.g. a
-one-line stderr summary count) instead of treating each one as a per-file
-failure, and give them a distinguishable marker in `list` output.
+**Status: fixed**, two parts:
+
+- `list` (`cmd_list.cpp`) no longer prints the raw `CASC_INVALID_ID`
+  sentinel as if it were a real numeric ID, in any format: text shows
+  `fdid=-`, CSV leaves the field empty, JSON emits `"fdid":null`. This
+  applies whenever such an entry is displayed at all (not just under
+  `--unresolved-only`), so a plain `list '*'` no longer lies about it
+  either.
+- `extract-batch` (`cmd_extract_batch.cpp`) now checks
+  `fd.dwFileDataId == CASC_INVALID_ID` before attempting anything and skips
+  the entry outright (no `CascOpenFile` attempt, no per-file warning),
+  tallying a separate `skippedNoId` counter that gets one summary line at
+  the end (`skipped N entries with no FileDataID (not extractable game
+  assets)`) instead of flooding stderr with a warning per entry.
+
+**Fix direction (done):** matches what's above — skip/report
+`CASC_INVALID_ID` entries distinctly instead of treating each one as a
+per-file failure, and never print the sentinel as if it were a real ID.
 
 **Test:** shares its regression test with #2 (same root cause, same
-`CASC_INVALID_ID` rows) — see #2's "worklist purity" test, currently red.
-The `extract-batch`-floods-stderr consequence described above isn't
-separately covered: reproducing it for real means running
-`extract-batch '*'` over the whole ~3.19M-entry storage (the ~1.3M-warning
-flood only shows up at that scale), which is too slow to run as a routine
-test. Flagging that as a known coverage gap on top of the finding itself,
-not adding a test for it.
+`CASC_INVALID_ID` rows) — see #2's "worklist purity" test, now green.
+The `extract-batch`-floods-stderr consequence specifically isn't covered by
+an automated test: reproducing the actual flood means running
+`extract-batch '*'` over the whole ~3.19M-entry storage (it only shows up
+at that scale), which is too slow to run routinely. Verified by hand
+instead — a narrow real mask (`character/bloodelf/female/*`, no matching
+no-ID entries) still dry-runs identically to before the fix
+(`would extract 1243 files, 188250655 bytes`), confirming the new skip path
+doesn't disturb the normal case.
 
 ---
 
-## 4. [bug] An invalid `--product` codename produces a misleading "check your storage path" error
+## 4. [bug, fixed] An invalid `--product` codename produces a misleading "check your storage path" error
 
 The storage path is 100% valid (works fine without `--product`); only the
 codename is wrong:
@@ -178,19 +203,34 @@ project explicitly calls out and tests for elsewhere (see item #1) — just
 not extended to storage-open failures at all, and with zero test coverage
 (see item #9).
 
-**Fix direction:** inspect `GetCascError()` after a failed
-`CascOpenStorageEx` and only show the `.build.info` hint when the error is
-actually consistent with a bad/missing storage path; give `--product`
-mismatches their own message.
+**Status: fixed.** `storage::open()` (`src/storage.cpp`) now checks
+whether `<storage-path>/.build.info` actually exists before deciding which
+hint to print: if it doesn't, the original "expecting a directory
+containing .build.info" hint still applies (that's still the likely real
+cause). If it does exist and `--product` was given, a distinct hint prints
+instead ("the storage path itself looks fine -- check --product '...' is a
+valid codename for this install"). Confirmed by hand:
+
+```
+$ casc-tool list --storage <valid path> --listfile <valid listfile> --product totally_bogus_product --limit 1
+error: couldn't open storage '<valid path>': No such file or directory
+       (the storage path itself looks fine -- check --product 'totally_bogus_product' is a valid codename for this install)
+```
+
+**Fix direction (done):** matches what's above — chose a filesystem check
+(`.build.info` presence) over trying to interpret CascLib's specific
+`GetCascError()` codes, since that mapping isn't documented and could vary
+across failure causes; this way the tool doesn't need to guess.
 
 **Test:** `tests/test_integration.cpp`, suite "integration: --product error
 message accuracy" → `"an invalid --product codename isn't blamed on the
-storage path"`. **Red** — currently fails (the `.build.info` hint still
-shows up). This test also closes #9's coverage gap.
+storage path"`. **Green** — passes against the real install. This test also
+closes #9's coverage gap (for the failure path; see #9 for what's still
+open there).
 
 ---
 
-## 5. [bug] A directory passed as `--listfile` is silently accepted and produces total, unexplained name-resolution failure
+## 5. [bug, fixed] A directory passed as `--listfile` is silently accepted and produces total, unexplained name-resolution failure
 
 `storage::checkListFileExists` (`src/storage.cpp`) only calls
 `std::filesystem::exists(path)`, which is true for directories too:
@@ -218,18 +258,25 @@ WoW install root instead of the CSV inside it) gets a fully "successful"
 run with zero actionable signal that anything is wrong — indistinguishable
 from a huge/fresh install with a genuinely low name-resolution rate.
 
-**Fix direction:** `checkListFileExists` should also require
-`std::filesystem::is_regular_file(path)`, with a message naming the
-listfile path as the problem, same as the missing-file case.
+**Status: fixed.** `checkListFileExists` (`src/storage.cpp`) now also
+requires `std::filesystem::is_regular_file(path)`, with its own message:
+
+```
+$ casc-tool list --storage <valid path> --listfile <valid path (a directory)> --limit 1
+error: listfile '<valid path>' isn't a regular file (looks like a directory?)
+(exit code 1)
+```
+
+**Fix direction (done):** matches what's above.
 
 **Test:** `tests/test_integration.cpp`, suite "integration: --listfile must
 be a file, not a directory" → `"passing a directory as --listfile is
-reported as a listfile problem, not silently accepted"`. **Red** —
-currently fails (exit code stays 0, stderr never mentions "listfile").
+reported as a listfile problem, not silently accepted"`. **Green** — passes
+against the real install.
 
 ---
 
-## 6. [bug] Non-numeric `--limit` crashes into a raw, unhelpful C++ exception message
+## 6. [bug, fixed] Non-numeric `--limit` crashes into a raw, unhelpful C++ exception message
 
 ```
 $ casc-tool list --limit banana --storage ... --listfile ...
@@ -244,19 +291,30 @@ gets printed verbatim. Every other user-input mistake in this tool (bad
 `--format`, bad `--locale`, wrong positional count) gets a clear,
 actionable message; this one doesn't.
 
-**Fix direction:** validate the `--limit` string (or catch
-`std::invalid_argument`/`std::out_of_range` around the `stol` call) and
-raise a `cli::ArgError` with a message like "‑‑limit must be a whole number
-≥ 0".
+**Status: fixed.** `cmd_list.cpp` now parses `--limit` with `std::stol`
+inside a `try`/`catch`, also checking that the whole string was consumed
+(so `"5abc"` is rejected too, not silently truncated to `5`), and rejects
+negative values explicitly (see #7). Any of those now produce the same
+clear message, matching the existing local style for `--format` validation
+in the same function (print + `return 2`, rather than throwing
+`cli::ArgError`):
+
+```
+$ casc-tool list --limit banana
+error: --limit must be a whole number >= 0 (got 'banana')
+(exit code 2)
+```
+
+**Fix direction (done):** matches what's above.
 
 **Test:** `tests/test_integration.cpp`, suite "integration: --limit input
 validation" → `"a non-numeric --limit doesn't crash into a raw std::stol
-exception message"`. **Red** — currently fails (`error: stol` still comes
-through). Needs no real storage; runs unconditionally.
+exception message"`. **Green** — passes. Needs no real storage; runs
+unconditionally.
 
 ---
 
-## 7. [bug] Negative `--limit` is silently accepted, does a full expensive scan, and shows nothing
+## 7. [bug, fixed] Negative `--limit` is silently accepted, does a full expensive scan, and shows nothing
 
 ```
 $ casc-tool list --limit -5 --storage ... --listfile ...
@@ -272,17 +330,28 @@ scan (same cost as `--limit 0`) and then reports zero rows shown, with a
 "rerun with --limit 0" hint that has nothing to do with the actual
 problem. No error, no warning that `-5` isn't a sane value.
 
-**Fix direction:** same validation as #6 — reject negative values (other
-than treating them as equivalent to some documented meaning) with a clear
-`ArgError` instead of a silent, expensive no-op.
+**Status: fixed.** Same validation as #6 — negative values are now
+explicitly rejected (chose outright rejection over silently treating them
+as equivalent to `0`/unlimited, since a typo'd sign shouldn't quietly
+change what "unlimited" means):
 
-**Test:** same suite as #6 → `"a negative --limit doesn't silently show
-zero rows after a full scan"`. **Red** — currently fails (1243 real matches
-on the test mask, 0 shown).
+```
+$ casc-tool list --limit -5
+error: --limit must be a whole number >= 0 (got '-5')
+(exit code 2)
+```
+
+**Fix direction (done):** reject, with a clear `ArgError`-style message,
+instead of a silent, expensive no-op.
+
+**Test:** same suite as #6, renamed to match the chosen fix →
+`"a negative --limit is rejected instead of silently doing a full scan and
+showing nothing"`. **Green** — passes. Also needs no real storage now
+(rejected before `--storage`/`--listfile` are ever touched, same as #6).
 
 ---
 
-## 8. [latent, untested] `format::jsonEscape` doesn't escape all JSON-mandated control characters
+## 8. [latent, fixed] `format::jsonEscape` doesn't escape all JSON-mandated control characters
 
 `src/format.hpp`'s `jsonEscape` only special-cases `"`, `\`, `\n`, `\r`,
 `\t`. Per RFC 8259, every control character `U+0000`–`U+001F` must be
@@ -300,15 +369,17 @@ conventions say should be validated at the boundary) with no guard and no
 test, one unusual upstream listfile entry away from emitting broken JSON
 that a downstream `jq`/parser would reject outright.
 
-**Fix direction:** escape the full `U+0000`–`U+001F` range (e.g. `\u00XX`
-for anything without a named short escape), and add a test case for at
-least one such byte.
+**Status: fixed.** `format::jsonEscape` (`src/format.hpp`) now escapes any
+byte below `0x20` that doesn't already have a named short escape as
+`\u00XX` (lowercase hex, zero-padded to 4 digits), covering the full
+RFC 8259 C0 control range.
+
+**Fix direction (done):** matches what's above.
 
 **Test:** `tests/test_format.cpp`, suite `format::jsonEscape` → `"C0 control
 characters without a short escape become \u00XX (RFC 8259)"` and `"every C0
 control character except \n \r \t is escaped somehow, never emitted raw"`.
-**Red** — both fail (4/4 and 28/28 assertions respectively; every
-untested control byte still passes through raw).
+**Green** — both pass (38/38 assertions in the suite).
 
 ---
 
@@ -320,11 +391,12 @@ path (a real multi-flavor install), not the failure path (this is how #4
 went unnoticed). It's one of the five options every storage command
 documents and shares (`storage::commonOptionSpecs()`).
 
-**Test:** the failure path is now covered by #4's test (same test, see
-above) — currently red, since #4 itself is still open. Still no happy-path
+**Status: partially closed.** The failure path is now covered by #4's test
+(same test, see above) — **green**, since #4 is fixed. Still no happy-path
 test (a valid, non-default `--product` codename against a real multi-flavor
 install) — this install only has the one `wow` flavor available, so that
-side of the gap remains open regardless of #4's fix.
+side of the gap remains genuinely open; nothing to fix in code for it, it
+just needs a multi-flavor install to test against.
 
 ---
 

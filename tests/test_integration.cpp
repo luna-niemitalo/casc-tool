@@ -341,10 +341,10 @@ TEST_CASE("dry-run's predicted count and bytes match the real run exactly") {
 }  // TEST_SUITE("integration: extract-batch dry-run")
 
 TEST_SUITE("integration: --limit input validation") {
-// Regression tests for a bug found by hand: --limit is passed straight to
-// std::stol with no validation at all, in cmd_list.cpp, *before* --storage
-// or --listfile are ever touched -- so the first case here needs no real
-// storage and always runs, unlike every other suite in this file.
+// Regression tests for a bug found by hand: --limit used to be passed
+// straight to std::stol with no validation at all, in cmd_list.cpp,
+// *before* --storage or --listfile are ever touched -- so neither case here
+// needs real storage, unlike every other suite in this file.
 
 TEST_CASE("a non-numeric --limit doesn't crash into a raw std::stol exception message") {
     auto r = runCasc({"list", "--limit", "banana"});
@@ -352,17 +352,15 @@ TEST_CASE("a non-numeric --limit doesn't crash into a raw std::stol exception me
     CHECK_MESSAGE(r.err.find("stol") == std::string::npos,
                   "expected a clear '--limit must be a number' style message, got the raw std::stol "
                   "exception text instead:\n" << r.err);
+    CHECK(r.err.find("--limit") != std::string::npos);
 }
 
-TEST_CASE("a negative --limit doesn't silently show zero rows after a full scan") {
-    SKIP_WITHOUT_REAL_STORAGE();
-    auto r = runCasc(withStorage({"list", "character/bloodelf/female/*", "--limit", "-5"}));
-    auto summary = parseListSummary(r.err);
-    CHECK_MESSAGE(summary.matched > 0, "sanity: the mask should still match real files");
-    CHECK_MESSAGE(summary.shown > 0,
-                  "--limit -5 shows 0 rows despite " << summary.matched << " real matches, with no "
-                  "error explaining why -- a negative --limit should be rejected, not silently "
-                  "truncated to 'show nothing'");
+TEST_CASE("a negative --limit is rejected instead of silently doing a full scan and showing nothing") {
+    // Also needs no real storage -- --limit is validated before --storage/
+    // --listfile are ever touched, same as the non-numeric case above.
+    auto r = runCasc({"list", "--limit", "-5"});
+    CHECK(r.exitCode != 0);
+    CHECK(r.err.find("--limit") != std::string::npos);
 }
 
 }  // TEST_SUITE("integration: --limit input validation")
@@ -409,6 +407,10 @@ TEST_CASE("--unresolved-only never reports CASC_INVALID_ID as if it were a real 
                   "the 'unresolved' worklist includes entries with no FileDataID at all "
                   "(CASC_INVALID_ID) -- these aren't nameable files and can't be opened by "
                   "info/extract, so they don't belong in a listfile-contribution worklist");
+    // They shouldn't just vanish silently either -- the skipped count
+    // should still be visible to whoever's running this.
+    CHECK(r.err.find("skipped") != std::string::npos);
+    CHECK(r.err.find("no FileDataID") != std::string::npos);
 }
 
 }  // TEST_SUITE("integration: --unresolved-only worklist purity")

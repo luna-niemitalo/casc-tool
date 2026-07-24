@@ -60,7 +60,20 @@ int runList(const std::vector<std::string>& rawArgs) {
         std::fprintf(stderr, "error: --format must be text, csv, or json (got '%s')\n", fmt.c_str());
         return 2;
     }
-    long limit = std::stol(args.optionOr("--limit", "100"));
+    std::string limitStr = args.optionOr("--limit", "100");
+    long limit = 0;
+    bool limitOk = true;
+    try {
+        size_t consumed = 0;
+        limit = std::stol(limitStr, &consumed);
+        limitOk = consumed == limitStr.size();
+    } catch (const std::exception&) {
+        limitOk = false;
+    }
+    if (!limitOk || limit < 0) {
+        std::fprintf(stderr, "error: --limit must be a whole number >= 0 (got '%s')\n", limitStr.c_str());
+        return 2;
+    }
 
     std::string listFileError;
     if (!storage::checkListFileExists(listFile, &listFileError)) {
@@ -82,13 +95,27 @@ int runList(const std::vector<std::string>& rawArgs) {
         return 1;
     }
 
-    unsigned long long scanned = 0, matched = 0, shown = 0;
+    unsigned long long scanned = 0, matched = 0, shown = 0, skippedNoId = 0;
     if (fmt == "csv") std::printf("fdid,size,resolved,name\n");
     if (fmt == "json") std::printf("[\n");
 
     do {
         scanned++;
         bool resolved = fd.NameType == CascNameFull;
+        bool hasFileDataId = fd.dwFileDataId != CASC_INVALID_ID;
+
+        // Entries with no FileDataID at all are CKey/EKey-only CASC
+        // components (patch/build metadata, not game assets) -- they
+        // always report as unresolved (no NameType == CascNameFull is
+        // possible without an ID) but they can never be named or opened by
+        // info/extract either, so they don't belong in the "--unresolved
+        // FileDataIDs needing a listfile entry" worklist. Keep them out of
+        // it (and out of its matched/shown counts) instead of presenting
+        // them as if they were unnamed files (see FAILURES.md #2/#3).
+        if (unresolvedOnly && !hasFileDataId) {
+            skippedNoId++;
+            continue;
+        }
         if (unresolvedOnly && resolved) continue;
         matched++;
 
@@ -97,14 +124,17 @@ int runList(const std::vector<std::string>& rawArgs) {
         shown++;
 
         if (fmt == "text") {
-            std::printf("  [%s] fdid=%u size=%llu %s\n", resolved ? "name" : "id  ", fd.dwFileDataId,
+            std::string fdidStr = hasFileDataId ? std::to_string(fd.dwFileDataId) : "-";
+            std::printf("  [%s] fdid=%s size=%llu %s\n", resolved ? "name" : "id  ", fdidStr.c_str(),
                         static_cast<unsigned long long>(fd.FileSize), fd.szFileName);
         } else if (fmt == "csv") {
-            std::printf("%u,%llu,%d,%s\n", fd.dwFileDataId, static_cast<unsigned long long>(fd.FileSize),
+            std::string fdidStr = hasFileDataId ? std::to_string(fd.dwFileDataId) : "";
+            std::printf("%s,%llu,%d,%s\n", fdidStr.c_str(), static_cast<unsigned long long>(fd.FileSize),
                         resolved ? 1 : 0, format::csvEscape(fd.szFileName).c_str());
         } else {
-            std::printf("%s{\"fdid\":%u,\"size\":%llu,\"resolved\":%s,\"name\":\"%s\"}\n", shown > 1 ? "," : "",
-                        fd.dwFileDataId, static_cast<unsigned long long>(fd.FileSize), resolved ? "true" : "false",
+            std::string fdidJson = hasFileDataId ? std::to_string(fd.dwFileDataId) : "null";
+            std::printf("%s{\"fdid\":%s,\"size\":%llu,\"resolved\":%s,\"name\":\"%s\"}\n", shown > 1 ? "," : "",
+                        fdidJson.c_str(), static_cast<unsigned long long>(fd.FileSize), resolved ? "true" : "false",
                         format::jsonEscape(fd.szFileName).c_str());
         }
     } while (CascFindNextFile(hFind.get(), &fd));
@@ -114,7 +144,11 @@ int runList(const std::vector<std::string>& rawArgs) {
         std::printf("  ... (%llu more; rerun with --limit 0 to see all)\n", matched - shown);
     }
 
-    std::fprintf(stderr, "scanned %llu entries, %llu matched, %llu shown\n", scanned, matched, shown);
+    std::fprintf(stderr, "scanned %llu entries, %llu matched, %llu shown", scanned, matched, shown);
+    if (skippedNoId > 0) {
+        std::fprintf(stderr, ", %llu skipped (no FileDataID -- not a nameable file)", skippedNoId);
+    }
+    std::fprintf(stderr, "\n");
     return 0;
 }
 

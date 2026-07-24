@@ -89,13 +89,27 @@ int runExtractBatch(const std::vector<std::string>& rawArgs) {
         return 1;
     }
 
-    unsigned long long matched = 0, extracted = 0, failed = 0;
+    unsigned long long matched = 0, extracted = 0, failed = 0, skippedNoId = 0;
     uint64_t totalBytes = 0, plannedBytes = 0;
     auto lastReport = std::chrono::steady_clock::now();
 
     do {
         bool resolved = fd.NameType == CascNameFull;
         if (unresolvedOnly && resolved) continue;
+
+        // Entries with no FileDataID at all (CKey/EKey-only CASC
+        // components, not game assets -- see FAILURES.md #2/#3) can never
+        // be opened via CASC_FILE_DATA_ID; CascOpenFile always fails for
+        // them. A broad mask like '*' can match well over a million of
+        // these on a real install, so skip them outright instead of
+        // attempting the open and logging a per-file warning for each one
+        // -- that would drown out any genuinely actionable failure in the
+        // same run.
+        if (fd.dwFileDataId == CASC_INVALID_ID) {
+            skippedNoId++;
+            continue;
+        }
+
         matched++;
         plannedBytes += fd.FileSize;
 
@@ -133,6 +147,9 @@ int runExtractBatch(const std::vector<std::string>& rawArgs) {
     } else {
         std::printf("extracted %llu/%llu files (%llu failed), %llu bytes -> %s\n", extracted, matched, failed,
                     static_cast<unsigned long long>(totalBytes), outDir.c_str());
+    }
+    if (skippedNoId > 0) {
+        std::fprintf(stderr, "skipped %llu entries with no FileDataID (not extractable game assets)\n", skippedNoId);
     }
     return failed > 0 ? 1 : 0;
 }
