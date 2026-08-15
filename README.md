@@ -30,6 +30,17 @@ listed below or fetched from its own actual upstream source.
    `character/bloodelf/female/bloodelffemale.m2`. Get one from its actual
    upstream source: [wowdev/wow-listfile releases](https://github.com/wowdev/wow-listfile/releases) —
    download `community-listfile.csv` and pass it as `--listfile`.
+4. **(Optional) A TACT keys file, if you hit encrypted content.** Most of
+   CASC is plain (BLTE-compressed, not encrypted); a small amount is
+   genuinely encrypted client-side and unreadable without the matching key,
+   independent of whether the bytes are present locally. Same shape as the
+   listfile above — this tool never fetches or bundles keys itself, you
+   provide a file: get one from its actual upstream source,
+   [wowdev/TACTKeys](https://github.com/wowdev/TACTKeys) (`WoW.txt`, kept
+   in sync as new keys are found the same way `wow-listfile` is), and pass
+   it as `--keys`. Skip this step entirely if you never see "file is
+   encrypted and the decryption key is missing" — most workflows never
+   will.
 
 ## Installing (as a Nix package)
 
@@ -213,9 +224,25 @@ CDN/online mode — see "Design notes" below).
 
 **"file is encrypted and the decryption key is missing"** — some CASC
 content is genuinely encrypted client-side; without the matching key it's
-permanently unreadable, not just unnamed. Pass a keys file (same format
-as [wow.tools's tactkeys API](https://wow.tools/api.php?type=tactkeys): one
-`KeyName KeyValue` hex pair per line) via `--keys <file>`.
+permanently unreadable, not just unnamed or undownloaded — a different
+problem from either of those, and this is the only message that means it.
+Pass a keys file via `--keys <file>`: one `KeyName KeyValue` hex pair per
+line, get it from its actual upstream source,
+[wowdev/TACTKeys](https://github.com/wowdev/TACTKeys) (`WoW.txt`), same
+"download it yourself, this tool never fetches it" contract as
+`--listfile`. [wow.tools's tactkeys API](https://wow.tools/api.php?type=tactkeys)
+mirrors the same underlying data if you'd rather query it than keep a file
+around. Not every encrypted FileDataID has a publicly known key yet —
+`--keys` closes the ones that do; the rest stay unreadable until someone
+finds that specific key, which is a real, external, moving target this
+tool has no way to shortcut.
+
+For an encrypted FileDataID whose key `--keys` does happen to cover, the
+shape looks like this: `extract`/`info` fails with the message above when
+run without `--keys`, then succeeds once run again with `--keys keys.txt`
+pointed at a file that contains that ID's real key — no other change.
+Same before/after `--listfile` already gives you for a *name*, just for a
+*byte* instead of a string.
 
 **A file variant seems to be missing depending on region/language** — pass
 `--locale <name>` (see `casc-tool list --help` for the list of names); the
