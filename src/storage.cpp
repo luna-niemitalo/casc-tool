@@ -239,7 +239,46 @@ bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& l
     return true;
 }
 
-bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut) {
+namespace {
+
+// Not a flag: nothing about this value varies per invocation the way
+// --strict-encrypted's on/off decision does. Chosen as a starting point
+// (mostly-legitimate files with one small encrypted tail, like the real
+// DB2 case this was built for, land well under it; a file that's mostly
+// ciphertext isn't meaningfully "recovered" by zero-filling the rest of it).
+constexpr double kMaxOvercomeEncryptedFraction = 0.30;
+
+// Streams hFile from its *current* read position into an already-open
+// FILE*, chunk at a time, until EOF or a read failure. Returns the raw
+// CascLib error code on failure (ERROR_SUCCESS on a clean EOF) so the
+// caller can decide what a given code means -- this is the only place
+// that touches CascReadFile directly; both passes copyToFile below needs
+// (plain, and the retry-with-overcome-encrypted one) share it instead of
+// duplicating the chunk loop.
+DWORD streamChunks(HANDLE hFile, FILE* out, uint64_t* bytesWritten) {
+    constexpr DWORD kChunk = 1 << 20;  // 1 MiB
+    std::vector<char> buffer(kChunk);
+    uint64_t total = 0;
+    DWORD errCode = ERROR_SUCCESS;
+
+    while (true) {
+        DWORD bytesRead = 0;
+        if (!CascReadFile(hFile, buffer.data(), kChunk, &bytesRead)) {
+            errCode = GetCascError();
+            break;
+        }
+        if (bytesRead == 0) break;
+        std::fwrite(buffer.data(), 1, bytesRead, out);
+        total += bytesRead;
+    }
+    if (bytesWritten) *bytesWritten = total;
+    return errCode;
+}
+
+}  // namespace
+
+bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut,
+                bool allowOvercomeEncrypted, std::string* overcomeNote) {
     std::filesystem::path path(outPath);
     if (path.has_parent_path()) {
         std::error_code ec;
@@ -255,26 +294,80 @@ bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten
         *errorOut = "couldn't create '" + outPath + "': " + std::strerror(errno);
         return false;
     }
-
-    constexpr DWORD kChunk = 1 << 20;  // 1 MiB
-    std::vector<char> buffer(kChunk);
     uint64_t total = 0;
-    bool ok = true;
-
-    while (true) {
-        DWORD bytesRead = 0;
-        if (!CascReadFile(hFile, buffer.data(), kChunk, &bytesRead)) {
-            *errorOut = "read failed after " + std::to_string(total) + " bytes: " + errorMessage(GetCascError());
-            ok = false;
-            break;
-        }
-        if (bytesRead == 0) break;
-        std::fwrite(buffer.data(), 1, bytesRead, out);
-        total += bytesRead;
-    }
+    DWORD errCode = streamChunks(hFile, out, &total);
     std::fclose(out);
-    if (bytesWritten) *bytesWritten = total;
-    return ok;
+
+    if (errCode == ERROR_SUCCESS) {
+        if (bytesWritten) *bytesWritten = total;
+        return true;
+    }
+
+    if (errCode != ERROR_FILE_ENCRYPTED || !allowOvercomeEncrypted) {
+        std::filesystem::remove(outPath);
+        *errorOut = "read failed after " + std::to_string(total) + " bytes: " + errorMessage(errCode);
+        return false;
+    }
+
+    // Encrypted, key missing, and the fallback is allowed -- `total` bytes
+    // were read cleanly before hitting the wall; treat that as a lower
+    // bound on what's recoverable (an upper bound on the encrypted
+    // fraction), since CascLib can't tell us anything more precise than
+    // "this read call hit an encrypted block."
+    CASC_FILE_FULL_INFO info{};
+    size_t needed = 0;
+    uint64_t contentSize = total;  // fallback if the size probe itself somehow fails
+    if (CascGetFileInfo(hFile, CascFileFullInfo, &info, sizeof(info), &needed) && info.ContentSize > 0) {
+        contentSize = info.ContentSize;
+    }
+    double encryptedFraction = 1.0 - (static_cast<double>(total) / static_cast<double>(contentSize));
+
+    char pct[16];
+    std::snprintf(pct, sizeof(pct), "%.1f", encryptedFraction * 100.0);
+
+    if (encryptedFraction > kMaxOvercomeEncryptedFraction) {
+        std::filesystem::remove(outPath);
+        *errorOut = "file is encrypted and the decryption key is missing (see --keys) -- at least " +
+                    std::string(pct) + "% of this file's content is affected, over the " +
+                    std::to_string(static_cast<int>(kMaxOvercomeEncryptedFraction * 100)) +
+                    "% cutoff for writing a partially-recovered file anyway";
+        return false;
+    }
+
+    // Under the cutoff: retry from the top with CASC_OVERCOME_ENCRYPTED set
+    // on the already-open handle (CascSetFileFlags applies to the *next*
+    // CascReadFile, no reopen needed) -- CascLib zero-fills whatever it
+    // can't decrypt instead of failing, so this pass should always
+    // succeed barring an unrelated local I/O failure, still surfaced below.
+    if (!CascSetFileFlags(hFile, CASC_OVERCOME_ENCRYPTED) || !CascSetFilePointer64(hFile, 0, nullptr, FILE_BEGIN)) {
+        *errorOut = "couldn't retry with the encrypted-block fallback: " + errorMessage(GetCascError());
+        return false;
+    }
+
+    out = std::fopen(outPath.c_str(), "wb");
+    if (!out) {
+        *errorOut = "couldn't create '" + outPath + "': " + std::strerror(errno);
+        return false;
+    }
+    uint64_t total2 = 0;
+    DWORD errCode2 = streamChunks(hFile, out, &total2);
+    std::fclose(out);
+
+    if (errCode2 != ERROR_SUCCESS) {
+        std::filesystem::remove(outPath);
+        *errorOut = "read failed even with the encrypted-block fallback, after " + std::to_string(total2) +
+                    " bytes: " + errorMessage(errCode2);
+        return false;
+    }
+
+    if (bytesWritten) *bytesWritten = total2;
+    if (overcomeNote) {
+        *overcomeNote = "at least " + std::string(pct) +
+                        "% of this file's content is zero-filled (encrypted, key missing -- see --keys); "
+                        "wrote it anyway, under the " +
+                        std::to_string(static_cast<int>(kMaxOvercomeEncryptedFraction * 100)) + "% cutoff";
+    }
+    return true;
 }
 
 std::string sanitizeRelativePath(const std::string& rel) {

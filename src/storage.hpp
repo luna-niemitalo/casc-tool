@@ -131,10 +131,31 @@ bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& l
 // Streams an already-open file to disk in chunks, creating parent
 // directories as needed. Shared by `extract` and `extract-batch` so the
 // read/write loop and its error handling exist in exactly one place.
-// On failure, returns false and *errorOut is set to a human-readable reason
+// On failure, returns false, *errorOut is set to a human-readable reason
 // (either from GetCascError() or a plain errno message for the local
-// filesystem side).
-bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut);
+// filesystem side), and any partial output already written is deleted --
+// a failed extraction should never leave a truncated file sitting at the
+// real output path indistinguishable from a genuinely complete one.
+//
+// Default behavior (allowOvercomeEncrypted = true) recovers from a
+// partially-encrypted file automatically: if the read hits a block with a
+// missing decryption key, this estimates how much of the file is still
+// unread at that point (a lower bound on the encrypted fraction -- CascLib
+// gives no finer-grained signal than "this read hit an encrypted block");
+// under kMaxOvercomeEncryptedFraction (30%), it retries the whole read with
+// CascLib's own CASC_OVERCOME_ENCRYPTED (zero-fills what it can't decrypt
+// instead of failing) and succeeds, so most of a mostly-legitimate file
+// (like a DB2 with one small encrypted section) is still usable instead of
+// being entirely unextractable over a key gap that may never close. Over
+// that cutoff, or with allowOvercomeEncrypted = false (--strict-encrypted),
+// this fails exactly like it always did -- writing a file that's mostly
+// fabricated zeros isn't a favor to the caller, and some callers want a
+// hard guarantee that what lands on disk is bit-complete, full stop.
+// *overcomeNote, if non-null and the fallback actually fired, is set to a
+// human-readable summary of what got zero-filled -- callers should
+// surface this as a warning, not silence it into a plain success.
+bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut,
+                bool allowOvercomeEncrypted = true, std::string* overcomeNote = nullptr);
 
 // Neutralizes path-traversal in a CASC-root-derived relative name (from a
 // listfile entry or CascLib's own NameType == CascNameFull) before it's

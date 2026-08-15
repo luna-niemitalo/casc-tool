@@ -12,7 +12,13 @@ namespace commands {
 
 namespace {
 
-std::vector<cli::OptionSpec> specs() { return storage::commonOptionSpecs(); }
+std::vector<cli::OptionSpec> specs() {
+    auto s = storage::commonOptionSpecs();
+    s.push_back({"--strict-encrypted", false, "",
+                 "Never write a file that's partially encrypted with a missing key, even if only a small "
+                 "fraction of it is affected -- the default instead zero-fills and proceeds under 30%"});
+    return s;
+}
 
 const char* kUsage = "casc-tool extract <id-or-path> [out-file] [options]";
 
@@ -77,10 +83,14 @@ int runExtract(const std::vector<std::string>& rawArgs) {
     }
 
     uint64_t bytesWritten = 0;
-    std::string error;
-    if (!storage::copyToFile(hFile.get(), outFile, &bytesWritten, &error)) {
+    std::string error, overcomeNote;
+    bool allowOvercomeEncrypted = !args.flag("--strict-encrypted");
+    if (!storage::copyToFile(hFile.get(), outFile, &bytesWritten, &error, allowOvercomeEncrypted, &overcomeNote)) {
         std::fprintf(stderr, "error: %s\n", error.c_str());
         return 1;
+    }
+    if (!overcomeNote.empty()) {
+        std::fprintf(stderr, "warning: %s: %s\n", outFile.c_str(), overcomeNote.c_str());
     }
 
     std::fprintf(stderr, "extracted %s -> %s (%llu bytes)\n", idOrPath.c_str(), outFile.c_str(),

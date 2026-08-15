@@ -31,6 +31,7 @@ _casc_tool() {
                 '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
                 '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--strict-encrypted[Never write a file that'\''s partially encrypted with a missing key, even if only a small fraction of it is affected -- the default instead zero-fills and proceeds under 30%]' \
                 '*:arg:_files'
             ;;
         extract-batch)
@@ -44,6 +45,7 @@ _casc_tool() {
                 '--from-list[Extract exactly these FileDataIDs (one decimal ID per line) instead of matching a mask -- one storage open, no glob walk. Replaces <mask>; still takes <out-dir>]:value:_files' \
                 '--unresolved-only[Only extract entries with no name in --listfile (written as <out-dir>/_unresolved/FILE########.dat). Not valid with --from-list -- an explicit ID list is neither resolved nor unresolved, it'\''s just itself]' \
                 '--dry-run[Report what would be extracted (count, total bytes) without writing anything]' \
+                '--strict-encrypted[Never write a file that'\''s partially encrypted with a missing key, even if only a small fraction of it is affected -- the default instead zero-fills and proceeds under 30%]' \
                 '*:arg:_files -/'
             ;;
         info)

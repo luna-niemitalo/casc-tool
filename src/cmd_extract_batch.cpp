@@ -26,6 +26,9 @@ std::vector<cli::OptionSpec> specs() {
                  "<out-dir>/_unresolved/FILE########.dat). Not valid with --from-list -- "
                  "an explicit ID list is neither resolved nor unresolved, it's just itself"});
     s.push_back({"--dry-run", false, "", "Report what would be extracted (count, total bytes) without writing anything"});
+    s.push_back({"--strict-encrypted", false, "",
+                 "Never write a file that's partially encrypted with a missing key, even if only a small "
+                 "fraction of it is affected -- the default instead zero-fills and proceeds under 30%"});
     return s;
 }
 
@@ -110,7 +113,8 @@ int runExtractFromList(const cli::Args& args, const std::string& idsPath, const 
     storage::StorageHandle hStorage;
     if (!storage::open(storage::fromArgs(args), hStorage)) return 1;
 
-    unsigned long long extracted = 0, failed = 0, notInStorage = 0, notAvailable = 0;
+    bool allowOvercomeEncrypted = !args.flag("--strict-encrypted");
+    unsigned long long extracted = 0, failed = 0, notInStorage = 0, notAvailable = 0, partiallyEncrypted = 0;
     uint64_t totalBytes = 0, plannedBytes = 0;
     auto lastReport = std::chrono::steady_clock::now();
 
@@ -147,10 +151,14 @@ int runExtractFromList(const cli::Args& args, const std::string& idsPath, const 
 
         std::string outPath = outPathForId(id, names, outDir);
         uint64_t written = 0;
-        std::string error;
-        if (storage::copyToFile(hFile.get(), outPath, &written, &error)) {
+        std::string error, overcomeNote;
+        if (storage::copyToFile(hFile.get(), outPath, &written, &error, allowOvercomeEncrypted, &overcomeNote)) {
             extracted++;
             totalBytes += written;
+            if (!overcomeNote.empty()) {
+                partiallyEncrypted++;
+                std::fprintf(stderr, "\nwarning: %s (fdid=%u): %s\n", outPath.c_str(), id, overcomeNote.c_str());
+            }
         } else {
             failed++;
             std::fprintf(stderr, "\nwarning: %s (fdid=%u): %s\n", outPath.c_str(), id, error.c_str());
@@ -171,6 +179,10 @@ int runExtractFromList(const cli::Args& args, const std::string& idsPath, const 
     if (notInStorage > 0 || notAvailable > 0) {
         std::fprintf(stderr, "%llu not in this storage at all, %llu known but not locally available\n", notInStorage,
                      notAvailable);
+    }
+    if (partiallyEncrypted > 0) {
+        std::fprintf(stderr, "%llu file(s) partially zero-filled (encrypted content, key missing -- see --keys)\n",
+                     partiallyEncrypted);
     }
     return failed > 0 ? 1 : 0;
 }
@@ -248,7 +260,8 @@ int runExtractBatch(const std::vector<std::string>& rawArgs) {
         return 1;
     }
 
-    unsigned long long matched = 0, extracted = 0, failed = 0, skippedNoId = 0;
+    bool allowOvercomeEncrypted = !args.flag("--strict-encrypted");
+    unsigned long long matched = 0, extracted = 0, failed = 0, skippedNoId = 0, partiallyEncrypted = 0;
     uint64_t totalBytes = 0, plannedBytes = 0;
     auto lastReport = std::chrono::steady_clock::now();
 
@@ -278,13 +291,18 @@ int runExtractBatch(const std::vector<std::string>& rawArgs) {
         storage::FileHandle hFile;
         bool ok = CascOpenFile(hStorage.get(), CASC_FILE_DATA_ID(fd.dwFileDataId), CASC_LOCALE_ALL,
                                 CASC_OPEN_BY_FILEID, hFile.out());
-        std::string error;
+        std::string error, overcomeNote;
         uint64_t written = 0;
-        if (ok) ok = storage::copyToFile(hFile.get(), outPath, &written, &error);
+        if (ok) ok = storage::copyToFile(hFile.get(), outPath, &written, &error, allowOvercomeEncrypted, &overcomeNote);
 
         if (ok) {
             extracted++;
             totalBytes += written;
+            if (!overcomeNote.empty()) {
+                partiallyEncrypted++;
+                std::fprintf(stderr, "\nwarning: %s (fdid=%u): %s\n", outPath.c_str(), fd.dwFileDataId,
+                             overcomeNote.c_str());
+            }
         } else {
             failed++;
             std::fprintf(stderr, "\nwarning: %s (fdid=%u): %s\n", outPath.c_str(), fd.dwFileDataId,
@@ -309,6 +327,10 @@ int runExtractBatch(const std::vector<std::string>& rawArgs) {
     }
     if (skippedNoId > 0) {
         std::fprintf(stderr, "skipped %llu entries with no FileDataID (not extractable game assets)\n", skippedNoId);
+    }
+    if (partiallyEncrypted > 0) {
+        std::fprintf(stderr, "%llu file(s) partially zero-filled (encrypted content, key missing -- see --keys)\n",
+                     partiallyEncrypted);
     }
     return failed > 0 ? 1 : 0;
 }

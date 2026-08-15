@@ -7,6 +7,35 @@ nothing here is actionable. Newest first.
 
 ---
 
+## 2026-08-16 — Partial-encryption recovery, default on (`extract`/`extract-batch`)
+
+`storage::copyToFile` (`src/storage.cpp`) now recovers from a partially
+encrypted file automatically instead of failing the whole extraction: on
+hitting `ERROR_FILE_ENCRYPTED`, it estimates the unrecoverable fraction
+from how much was already read cleanly (a lower bound, since CascLib gives
+no finer signal than "this read hit an encrypted block"), and — if that's
+under 30% — retries with CascLib's own `CASC_OVERCOME_ENCRYPTED` (zero-fills
+what it can't decrypt) via `CascSetFileFlags`/`CascSetFilePointer64` on the
+already-open handle, no reopen needed. Over the cutoff, or with the new
+`--strict-encrypted` flag (`extract`, `extract-batch`), behavior is
+unchanged from before. Real motivating case: `dbfilesclient/
+itemdisplayinfo.db2` and two related DB2s (found during a cross-project
+investigation with the sibling `husk` project) each have a tiny (~0.1–0.2%)
+genuinely-encrypted trailing span with a key not in the public
+`wowdev/TACTKeys` database — previously unextractable *at all* over a few
+dozen bytes; now extract at full real size (verified against
+`CascGetFileInfo`'s own `ContentSize`) with a one-line warning. See
+README's Design notes for the full writeup.
+
+Fixed in the same change, found while touching this code: a failed
+extraction (any reason) used to leave a truncated file sitting at the
+output path with nothing marking it incomplete — `copyToFile` now deletes
+partial output on any real failure. Tests: `tests/test_integration.cpp`,
+suite "integration: encrypted-block recovery (default overcome-encrypted)"
+— three real fixtures on a live install (the recoverable case succeeding
+with a warning, `--strict-encrypted` still failing it, and a 100%-encrypted
+file still being rejected with no partial file left behind).
+
 ## 2026-08-16 — `extract-batch` output paths now sanitize traversal components, closing the deferred hardening gap
 
 Former `FAILURES.md` item 12/2 ("`extract-batch`'s output path is never

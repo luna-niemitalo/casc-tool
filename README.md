@@ -179,7 +179,11 @@ for a command's exact options. Summary of what each is for:
 
 - **`extract <id-or-path> [out-file]`** — pull one file to disk. Defaults
   the output filename to the file's own basename (or CascLib's
-  `FILE########.dat` convention if you only gave a bare ID).
+  `FILE########.dat` convention if you only gave a bare ID). If the file
+  turns out to be partially encrypted with a missing key, this defaults to
+  zero-filling the unreadable part and writing the rest anyway, as long as
+  that's under 30% of the file — see Troubleshooting's "file is encrypted"
+  entry, and `--strict-encrypted` to turn that off.
 
 - **`extract-batch <mask> <out-dir>`** — bulk version of `extract`: every
   match gets written to `<out-dir>/<in-game path>`, mirroring the game's own
@@ -194,7 +198,10 @@ for a command's exact options. Summary of what each is for:
   mask re-walks/re-scans the whole root on every invocation, which doesn't
   matter for one `extract-batch` call but does if you're driving it from a
   worklist of thousands of IDs one at a time. See "What this actually
-  found" below for the real-world case that motivated it.
+  found" below for the real-world case that motivated it. Shares
+  `extract`'s partial-encryption fallback (and `--strict-encrypted`) —
+  a run's summary reports how many files that applied to, separately from
+  clean extractions and outright failures.
 
 - **`diff <listfile-a> <listfile-b>`** — compare two listfile snapshots and
   report FileDataIDs added, removed, or renamed. Doesn't touch any storage —
@@ -243,6 +250,20 @@ run without `--keys`, then succeeds once run again with `--keys keys.txt`
 pointed at a file that contains that ID's real key — no other change.
 Same before/after `--listfile` already gives you for a *name*, just for a
 *byte* instead of a string.
+
+**A file is only *partially* encrypted (a small fraction, key missing) —
+does `extract`/`extract-batch` still refuse it entirely?** No, not by
+default. Some real files are almost entirely legitimate with just a small
+encrypted span (a DB2 with one encrypted section is a real example this
+was built from — see "Design notes" below); refusing the whole file over a
+few unreadable bytes throws away everything that *did* decode cleanly.
+`extract`/`extract-batch` default to zero-filling whatever they can't
+decrypt and writing the rest — but only when that's a small fraction (under
+30%) of the file; past that cutoff, or with `--strict-encrypted`, behavior
+is exactly the hard failure above. A file written this way gets a `warning:
+... % of this file's content is zero-filled ...` line on stderr — it's
+never silent about it. `info` is unaffected either way; it only reads
+metadata, never file content.
 
 **A file variant seems to be missing depending on region/language** — pass
 `--locale <name>` (see `casc-tool list --help` for the list of names); the
@@ -386,6 +407,32 @@ of thousands is the whole point.
   from that metadata (which flags/positionals are directories vs. files,
   `--format`'s enum values) is a small hand-kept table in
   `completion.cpp` — see its own top comment for exactly what and why.
+- **The partial-encryption fallback (`extract`/`extract-batch`, default on,
+  `--strict-encrypted` to disable) is CascLib's own `CASC_OVERCOME_ENCRYPTED`
+  open flag** (`CascSetFileFlags`), not a new decrypt implementation —
+  it zero-fills a block it can't decrypt instead of failing the whole read.
+  casc-tool's own contribution is the 30% cutoff around it: on the first
+  (normal) read hitting `ERROR_FILE_ENCRYPTED`, `storage::copyToFile`
+  (`src/storage.cpp`) treats the bytes already read cleanly as a lower
+  bound on what's recoverable — CascLib has no finer-grained "how much of
+  this file is encrypted" signal than "this read call hit a block it can't
+  decrypt" — and only retries with the flag set (via `CascSetFilePointer64`
+  back to the start, no reopen needed) if that bound is under the cutoff;
+  otherwise it fails exactly like it always did. Motivated by a real case
+  (2026-08-16, cross-project DB2 investigation with the sibling `husk`
+  project): `dbfilesclient/itemdisplayinfo.db2` and two related DB2s were
+  reported as "truncated a few dozen bytes short of a complete final
+  record" — turned out to not be a truncated download at all, but a
+  genuinely encrypted trailing span (~0.1–0.2% of each file) with a key
+  that isn't in the public `wowdev/TACTKeys` database. Before this fallback
+  existed, that meant the *entire* file — otherwise complete, thousands of
+  real rows — was unextractable over a few dozen unreadable bytes. All
+  three now extract at their full real size (verified against
+  `CascGetFileInfo`'s own `ContentSize`, byte for byte) with a one-line
+  warning instead of failing outright. Also fixed the same session as part
+  of this: a failed extraction (any reason, not just this one) used to
+  leave a truncated file sitting at the output path with nothing marking
+  it as incomplete; `copyToFile` now deletes it on any real failure.
 - **`storage::openFile` always resolves through `CascFindFirstFile`, even
   for a bare path, even though CascLib also has a direct by-name open
   mode.** This isn't stylistic — it's a real, empirically-found constraint:

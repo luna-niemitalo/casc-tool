@@ -132,6 +132,19 @@ ListSummary parseListSummary(const std::string& stderrText) {
     return s;
 }
 
+// Reads a FileDataID's real content_size straight from `info --format
+// json` instead of hardcoding it -- deliberately not a full JSON parse (see
+// format::jsonEscape's own tests for why this codebase doesn't pull in a
+// JSON library; same reasoning applies to reading its own output back here).
+unsigned long long contentSizeOf(unsigned fdid) {
+    auto r = runCasc(withStorage({"info", std::to_string(fdid), "--format", "json"}));
+    unsigned long long size = 0;
+    auto pos = r.out.find("\"content_size\":");
+    REQUIRE_MESSAGE(pos != std::string::npos, "no content_size field in: " << r.out);
+    REQUIRE(std::sscanf(r.out.c_str() + pos, "\"content_size\":%llu", &size) == 1);
+    return size;
+}
+
 unsigned long long countOccurrences(const std::string& haystack, const std::string& needle) {
     unsigned long long count = 0;
     size_t pos = 0;
@@ -449,6 +462,59 @@ TEST_CASE("a FileDataID that doesn't exist in CASC at all fails that one entry, 
 }
 
 }  // TEST_SUITE("integration: extract-batch --from-list")
+
+TEST_SUITE("integration: encrypted-block recovery (default overcome-encrypted)") {
+// Real fixtures on this install, found during a live DB2 investigation
+// (2026-08-16) -- not synthetic, so these could go stale if a future
+// patch changes either file's encryption status or content:
+//   - FileDataID 1266429 (dbfilesclient/itemdisplayinfo.db2): genuinely
+//     present, with a tiny (~0.1%) encrypted tail whose key isn't in the
+//     public wowdev/TACTKeys database -- exactly the shape this feature
+//     targets: mostly-legitimate data, small unrecoverable fraction.
+//   - FileDataID 1782613 (test/testtexture.blp): a Blizzard internal QA
+//     asset that's encrypted from byte 0 (100%) -- the "don't bother, this
+//     is all ciphertext" case the 30% cutoff exists to reject.
+// If either ever stops reproducing (key gets published, file gets patched
+// out), that's real news worth updating this comment over, not a flake.
+
+TEST_CASE("a file with a small encrypted fraction extracts completely by default, with a warning") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    unsigned long long realSize = contentSizeOf(1266429);
+
+    TempDir outDir;
+    std::string outFile = outDir.string() + "/itemdisplayinfo.db2";
+    auto r = runCasc(withStorage({"extract", "1266429", outFile}));
+
+    CHECK(r.exitCode == 0);
+    CHECK_MESSAGE(r.err.find("zero-filled") != std::string::npos,
+                  "expected a warning about the zero-filled fraction, got:\n" << r.err);
+    REQUIRE(std::filesystem::exists(outFile));
+    CHECK(std::filesystem::file_size(outFile) == realSize);
+}
+
+TEST_CASE("--strict-encrypted forces the old all-or-nothing failure, even under the cutoff") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    TempDir outDir;
+    std::string outFile = outDir.string() + "/itemdisplayinfo.db2";
+    auto r = runCasc(withStorage({"extract", "1266429", outFile, "--strict-encrypted"}));
+
+    CHECK(r.exitCode != 0);
+    CHECK(r.err.find("file is encrypted and the decryption key is missing") != std::string::npos);
+    CHECK_FALSE(std::filesystem::exists(outFile));
+}
+
+TEST_CASE("a mostly/fully-encrypted file is rejected even by default, and leaves no partial file") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    TempDir outDir;
+    std::string outFile = outDir.string() + "/testtexture.blp";
+    auto r = runCasc(withStorage({"extract", "1782613", outFile}));
+
+    CHECK(r.exitCode != 0);
+    CHECK(r.err.find("over the 30% cutoff") != std::string::npos);
+    CHECK_FALSE(std::filesystem::exists(outFile));
+}
+
+}  // TEST_SUITE("integration: encrypted-block recovery (default overcome-encrypted)")
 
 TEST_SUITE("integration: --limit input validation") {
 // Regression tests for a bug found by hand: --limit used to be passed

@@ -49,7 +49,7 @@ _casc_tool_completions() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product" -- "$cur"))
+                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --strict-encrypted" -- "$cur"))
                 return
             fi
             COMPREPLY=($(compgen -f -- "$cur"))
@@ -82,7 +82,7 @@ _casc_tool_completions() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --from-list --unresolved-only --dry-run" -- "$cur"))
+                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --from-list --unresolved-only --dry-run --strict-encrypted" -- "$cur"))
                 return
             fi
             compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))
