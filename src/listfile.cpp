@@ -46,4 +46,27 @@ std::vector<Change> diff(const std::map<unsigned, std::string>& a, const std::ma
     return changes;
 }
 
+std::vector<unsigned> loadIdList(const std::string& path, std::string* error) {
+    std::vector<unsigned> ids;
+    std::ifstream in(path);
+    if (!in) {
+        *error = "couldn't open '" + path + "'";
+        return ids;
+    }
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        try {
+            size_t consumed = 0;
+            unsigned id = static_cast<unsigned>(std::stoul(line, &consumed));
+            if (consumed != line.size()) continue;  // trailing junk -- not a bare ID
+            ids.push_back(id);
+        } catch (const std::exception&) {
+            continue;
+        }
+    }
+    return ids;
+}
+
 }  // namespace listfile

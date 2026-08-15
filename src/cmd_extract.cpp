@@ -36,6 +36,8 @@ std::string defaultOutFile(const std::string& idOrPath) {
 
 }  // namespace
 
+std::vector<cli::OptionSpec> extractSpecs() { return specs(); }
+
 void helpExtract() {
     std::printf(
         "casc-tool extract -- extract a single file to disk\n"

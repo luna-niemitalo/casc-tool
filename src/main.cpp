@@ -1,34 +1,15 @@
 #include <cstdio>
 #include <cstring>
-#include <functional>
-#include <map>
 #include <string>
 #include <vector>
 
 #include <CascLib.h>
 
 #include "cli.hpp"
-#include "commands.hpp"
+#include "completion.hpp"
+#include "registry.hpp"
 
 namespace {
-
-struct Command {
-    std::function<int(const std::vector<std::string>&)> run;
-    std::function<void()> help;
-    std::string oneLine;
-};
-
-const std::map<std::string, Command>& commandTable() {
-    static const std::map<std::string, Command> table = {
-        {"list", {commands::runList, commands::helpList, "list files in a CASC storage"}},
-        {"info", {commands::runInfo, commands::helpInfo, "show metadata for one file"}},
-        {"extract", {commands::runExtract, commands::helpExtract, "extract a single file to disk"}},
-        {"extract-batch",
-         {commands::runExtractBatch, commands::helpExtractBatch, "bulk-extract matching files to a directory"}},
-        {"diff", {commands::runDiff, commands::helpDiff, "compare two listfile snapshots"}},
-    };
-    return table;
-}
 
 bool wantsHelp(const std::vector<std::string>& args) {
     for (const auto& a : args) {
@@ -49,7 +30,7 @@ void printTopLevelHelp() {
         "\n"
         "commands:\n",
         CASCLIB_VERSION_STRING);
-    for (const auto& [name, cmd] : commandTable()) {
+    for (const auto& [name, cmd] : registry::commandTable()) {
         std::printf("  %-16s %s\n", name.c_str(), cmd.oneLine.c_str());
     }
     std::printf(
@@ -67,13 +48,31 @@ void printTopLevelHelp() {
         "--storage defaults to '.' and --listfile to 'listfile.csv', both in the\n"
         "current directory -- pass --storage/--listfile explicitly to use\n"
         "anything else. See README.md for the full picture (what CASC is, how\n"
-        "the listfile works, troubleshooting).\n");
+        "the listfile works, troubleshooting).\n"
+        "\n"
+        "shell completion: eval \"$(casc-tool --print-completion=bash)\" (or "
+        "zsh), or copy completions/casc-tool.bash|.zsh from the repo.\n");
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
     std::vector<std::string> args(argv + 1, argv + argc);
+
+    // Hidden `--print-completion=<bash|zsh>` support. No human reader --
+    // its only consumers are `completions/*.regenerate` and the installed
+    // completion script's own callback -- so it's deliberately absent from
+    // --help, same call husk's DESIGN.md documents for the identical flag.
+    if (args.size() == 1 && args[0].rfind("--print-completion=", 0) == 0) {
+        std::string shell = args[0].substr(std::strlen("--print-completion="));
+        try {
+            std::fputs(completion::generate(shell).c_str(), stdout);
+            return 0;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "error: %s\n", e.what());
+            return 2;
+        }
+    }
 
     if (args.empty() || args[0] == "--help" || args[0] == "-h") {
         printTopLevelHelp();
@@ -84,8 +83,8 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    auto it = commandTable().find(args[0]);
-    if (it == commandTable().end()) {
+    auto it = registry::commandTable().find(args[0]);
+    if (it == registry::commandTable().end()) {
         std::fprintf(stderr, "error: unknown command '%s'\n\n", args[0].c_str());
         printTopLevelHelp();
         return 2;

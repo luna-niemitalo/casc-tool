@@ -12,11 +12,10 @@
 // these aren't set, so the suite stays runnable without a real WoW install
 // -- see README.md's Testing section for the tradeoff.
 //
-// Some of these tests encode the *intended* behavior of casc-tool rather
-// than its current behavior, deliberately -- see FAILURES.md for the current
-// set (bad --product, --listfile pointing at a directory, non-numeric/
-// negative --limit, --unresolved-only worklist purity). A red test here is
-// doing its job, not a mistake.
+// A red test here means a real, currently-open gap -- see FAILURES.md for
+// the current (short) list; anything fixed since it was found is moved to
+// CHANGELOG.md instead, so a red test here is doing its job, not stale
+// commentary left behind after a fix landed.
 
 #include <algorithm>
 #include <array>
@@ -159,6 +158,25 @@ public:
     ~TempDir() { std::filesystem::remove_all(path_); }
     TempDir(const TempDir&) = delete;
     TempDir& operator=(const TempDir&) = delete;
+    std::string string() const { return path_.string(); }
+
+private:
+    std::filesystem::path path_;
+};
+
+// RAII temp file with given content, removed when the test ends -- used to
+// hand extract-batch --from-list a real FileDataID worklist file.
+class TempIdsFile {
+public:
+    explicit TempIdsFile(const std::string& content) {
+        path_ = std::filesystem::temp_directory_path() /
+                ("casc-tool-test-ids-" + std::to_string(::getpid()) + "-" + std::to_string(rand()) + ".txt");
+        std::ofstream out(path_);
+        out << content;
+    }
+    ~TempIdsFile() { std::filesystem::remove(path_); }
+    TempIdsFile(const TempIdsFile&) = delete;
+    TempIdsFile& operator=(const TempIdsFile&) = delete;
     std::string string() const { return path_.string(); }
 
 private:
@@ -339,6 +357,98 @@ TEST_CASE("dry-run's predicted count and bytes match the real run exactly") {
 }
 
 }  // TEST_SUITE("integration: extract-batch dry-run")
+
+TEST_SUITE("integration: extract-batch --from-list") {
+// --from-list (added to close a real gap: husk's own render-pipeline
+// investigation found 18,742/18,747 "missing" textures were actually
+// present in CASC, just never re-extracted -- checking each ID one at a
+// time via `extract` would mean 18,747 separate storage opens). These
+// cases need no real storage -- they're all rejected before --storage is
+// ever touched, same as the --limit validation suite below.
+
+TEST_CASE("--unresolved-only isn't valid together with --from-list") {
+    TempIdsFile idsFile("1\n");
+    auto r = runCasc({"extract-batch", "--from-list", idsFile.string(), "/unused", "--unresolved-only"});
+    CHECK(r.exitCode == 2);
+    CHECK(r.err.find("--from-list") != std::string::npos);
+}
+
+TEST_CASE("a nonexistent --from-list file is reported as a --from-list problem, not a generic one") {
+    auto r = runCasc({"extract-batch", "--from-list", "/definitely/does/not/exist.txt", "/unused"});
+    CHECK(r.exitCode != 0);
+    CHECK(r.err.find("--from-list") != std::string::npos);
+}
+
+TEST_CASE("a --from-list file with no valid IDs in it is rejected with a clear message") {
+    TempIdsFile idsFile("not an id\n\n");
+    auto r = runCasc({"extract-batch", "--from-list", idsFile.string(), "/unused"});
+    CHECK(r.exitCode != 0);
+    CHECK(r.err.find("--from-list") != std::string::npos);
+}
+
+TEST_CASE("dry-run and a real run agree, and files land at their real listfile-resolved paths") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    // Discover real FileDataIDs the mask-based path already resolves,
+    // rather than hardcoding one -- avoids coupling this test to a specific
+    // asset surviving in whatever install runs the suite (assets get
+    // renamed/removed across patches; a real listing never goes stale the
+    // way a hardcoded ID would).
+    auto listed = runCasc(withStorage({"list", "character/bloodelf/female/*", "--format", "csv", "--limit", "5"}));
+    REQUIRE(listed.exitCode == 0);
+    std::vector<std::string> ids;
+    std::istringstream lines(listed.out);
+    std::string line;
+    std::getline(lines, line);  // header row
+    while (std::getline(lines, line)) {
+        auto comma = line.find(',');
+        REQUIRE(comma != std::string::npos);
+        ids.push_back(line.substr(0, comma));
+    }
+    REQUIRE(ids.size() == 5);
+
+    std::string idsContent;
+    for (const auto& id : ids) idsContent += id + "\n";
+    TempIdsFile idsFile(idsContent);
+
+    auto dry = runCasc(withStorage({"extract-batch", "--from-list", idsFile.string(), "/unused", "--dry-run"}));
+    REQUIRE(dry.exitCode == 0);
+    unsigned long long predictedFiles = 0, predictedTotal = 0, predictedBytes = 0;
+    REQUIRE(std::sscanf(dry.out.c_str(), "would extract %llu/%llu files, %llu bytes", &predictedFiles,
+                        &predictedTotal, &predictedBytes) == 3);
+    CHECK(predictedFiles == 5);
+    CHECK(predictedTotal == 5);
+
+    TempDir outDir;
+    auto real = runCasc(withStorage({"extract-batch", "--from-list", idsFile.string(), outDir.string()}));
+    REQUIRE(real.exitCode == 0);
+    unsigned long long actualExtracted = 0, actualTotal = 0, actualFailed = 0;
+    REQUIRE(std::sscanf(real.out.c_str(), "extracted %llu/%llu files (%llu failed)", &actualExtracted,
+                        &actualTotal, &actualFailed) == 3);
+    CHECK(actualExtracted == 5);
+    CHECK(actualFailed == 0);
+    CHECK(actualTotal == predictedFiles);
+
+    // Cross-check the files actually landed at their real listfile-resolved
+    // names (mirroring the game's own layout), not under _unresolved/ --
+    // the whole reason this mode still loads --listfile too.
+    unsigned long long realFiles = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(outDir.string())) {
+        if (entry.is_regular_file()) realFiles++;
+    }
+    CHECK(realFiles == 5);
+    CHECK_FALSE(std::filesystem::exists(std::filesystem::path(outDir.string()) / "_unresolved"));
+}
+
+TEST_CASE("a FileDataID that doesn't exist in CASC at all fails that one entry, named in the warning") {
+    SKIP_WITHOUT_REAL_STORAGE();
+    TempIdsFile idsFile("4000000000\n");
+    TempDir outDir;
+    auto r = runCasc(withStorage({"extract-batch", "--from-list", idsFile.string(), outDir.string()}));
+    CHECK(r.exitCode != 0);
+    CHECK(r.err.find("4000000000") != std::string::npos);
+}
+
+}  // TEST_SUITE("integration: extract-batch --from-list")
 
 TEST_SUITE("integration: --limit input validation") {
 // Regression tests for a bug found by hand: --limit used to be passed

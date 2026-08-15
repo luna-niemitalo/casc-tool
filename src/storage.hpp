@@ -136,4 +136,19 @@ bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& l
 // filesystem side).
 bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut);
 
+// Neutralizes path-traversal in a CASC-root-derived relative name (from a
+// listfile entry or CascLib's own NameType == CascNameFull) before it's
+// joined with an extraction --out-dir: converts '\' to '/', then drops
+// every "." and ".." component and any leading "/" outright, rather than
+// erroring -- output-path construction for one hostile-looking name
+// shouldn't abort a whole batch extraction, it should just refuse to be
+// steered by it. Returns empty if nothing usable survives (e.g. the input
+// was only ".." components); callers should fall back to their own
+// no-real-name convention in that case, same as a genuinely unresolved
+// entry. See FAILURES.md's history (now CHANGELOG.md) for why this exists:
+// CascLib's own root-file name-hash check makes this hard to trigger in
+// practice, but casc-tool had no boundary check of its own for data the
+// project's conventions otherwise treat as foreign/untrusted.
+std::string sanitizeRelativePath(const std::string& rel);
+
 }  // namespace storage

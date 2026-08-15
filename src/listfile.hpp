@@ -27,4 +27,11 @@ struct Change {
 // changes are reported).
 std::vector<Change> diff(const std::map<unsigned, std::string>& a, const std::map<unsigned, std::string>& b);
 
+// Parses a plain FileDataID worklist: one decimal ID per line (e.g. the
+// output of `list --unresolved-only --format text`, or any other tool's
+// idea of "these FileDataIDs need attention"). Blank lines and lines that
+// aren't purely digits are silently skipped, same tolerance as load() above.
+// Sets *error and returns empty only if the file itself can't be opened.
+std::vector<unsigned> loadIdList(const std::string& path, std::string* error);
+
 }  // namespace listfile

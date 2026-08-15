@@ -27,6 +27,8 @@ const char* kUsage = "casc-tool list [mask] [options]";
 
 }  // namespace
 
+std::vector<cli::OptionSpec> listSpecs() { return specs(); }
+
 void helpList() {
     std::printf(
         "casc-tool list -- list files in a CASC storage\n"
@@ -111,7 +113,7 @@ int runList(const std::vector<std::string>& rawArgs) {
         // info/extract either, so they don't belong in the "--unresolved
         // FileDataIDs needing a listfile entry" worklist. Keep them out of
         // it (and out of its matched/shown counts) instead of presenting
-        // them as if they were unnamed files (see FAILURES.md #2/#3).
+        // them as if they were unnamed files (see CHANGELOG.md #2/#3).
         if (unresolvedOnly && !hasFileDataId) {
             skippedNoId++;
             continue;

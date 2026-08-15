@@ -82,7 +82,7 @@ bool open(const OpenOptions& opts, StorageHandle& out) {
         // problem -- a bad --product (or any other CascOpenStorageEx
         // failure with a perfectly valid path) used to get this exact same
         // ".build.info" hint too, which is actively wrong when the path is
-        // fine (see FAILURES.md #4).
+        // fine (see CHANGELOG.md #4).
         bool hasBuildInfo = std::filesystem::exists(std::filesystem::path(opts.path) / ".build.info");
         if (!hasBuildInfo) {
             std::fprintf(stderr, "       (expecting a directory containing .build.info -- see README.md §2.1)\n");
@@ -275,6 +275,33 @@ bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten
     std::fclose(out);
     if (bytesWritten) *bytesWritten = total;
     return ok;
+}
+
+std::string sanitizeRelativePath(const std::string& rel) {
+    std::vector<std::string> parts;
+    std::string cur;
+    auto flush = [&]() {
+        // Drops "." (no-op) and ".." (would climb above out-dir) outright,
+        // same as a "//" run's empty component -- none of these are ever a
+        // legitimate piece of a CASC-root-relative path.
+        if (!cur.empty() && cur != "." && cur != "..") parts.push_back(cur);
+        cur.clear();
+    };
+    for (char c : rel) {
+        if (c == '/' || c == '\\') {
+            flush();
+        } else {
+            cur += c;
+        }
+    }
+    flush();
+
+    std::string out;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (i > 0) out += "/";
+        out += parts[i];
+    }
+    return out;
 }
 
 }  // namespace storage

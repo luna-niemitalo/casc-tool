@@ -94,6 +94,40 @@ The rest of this document assumes you've done that and can just type
 `casc-tool`. If not, substitute `./build/casc-tool` (from this directory) or
 `./tools/casc-tool/build/casc-tool` (from the repo root).
 
+## Shell completion
+
+Bash and zsh completion scripts are checked in at `completions/casc-tool.bash`/
+`.zsh` — every subcommand, every flag, `--format`/`--locale` value choices
+where those are enumerable, `--storage` and `extract-batch`'s `<out-dir>`
+completing directories rather than files. Source whichever matches your
+shell:
+
+```
+source completions/casc-tool.bash     # bash, this session only
+source completions/casc-tool.zsh      # zsh, this session only
+```
+
+or copy it into wherever your shell's completion loader already looks
+(`/etc/bash_completion.d/`, a `$fpath` entry for zsh's `compinit`, etc.) for
+it to load automatically in new shells.
+
+These files are **captured output**, not hand-written — `casc-tool
+--print-completion=bash` (or `=zsh`) generates them from the tool's own,
+real, currently-parsed option tables (see `src/completion.cpp`'s own top
+comment for the mechanism), so they can't silently drift the way a
+hand-maintained completion script would the next time a flag is added or
+renamed. Regenerate after any option-table change:
+
+```
+casc-tool --print-completion=bash > completions/casc-tool.bash
+casc-tool --print-completion=zsh > completions/casc-tool.zsh
+```
+
+`--print-completion` itself doesn't show up in `casc-tool --help` — its only
+consumers are this regeneration step and the installed script's own
+callback, so it has no reason to occupy space in the help text a human
+actually reads.
+
 ## Quick start
 
 ```
@@ -141,6 +175,15 @@ for a command's exact options. Summary of what each is for:
   folder layout (entries with no known name go to `<out-dir>/_unresolved/`).
   Run with `--dry-run` first on anything you're not sure about the size of —
   it reports the file count and total bytes without writing anything.
+  **`--from-list <ids-file> <out-dir>`** is an alternate form: instead of a
+  glob mask, give it a plain text file of explicit FileDataIDs (one decimal
+  ID per line — e.g. another tool's own "these are missing" worklist) and it
+  extracts exactly those, opening the storage once regardless of list size.
+  Use this over a mask whenever you already know the exact IDs you want; a
+  mask re-walks/re-scans the whole root on every invocation, which doesn't
+  matter for one `extract-batch` call but does if you're driving it from a
+  worklist of thousands of IDs one at a time. See "What this actually
+  found" below for the real-world case that motivated it.
 
 - **`diff <listfile-a> <listfile-b>`** — compare two listfile snapshots and
   report FileDataIDs added, removed, or renamed. Doesn't touch any storage —
@@ -186,11 +229,13 @@ vendoring needed for this one). Two tiers, split by whether they need a real
 CASC storage:
 
 - **Pure-logic tests** (`tests/test_cli.cpp`, `test_format.cpp`,
-  `test_storage.cpp`, `test_listfile.cpp`) — argument parsing, csv/json
-  escaping, locale-name parsing, error-message mapping, listfile
-  loading/diffing. No external dependencies, always run, exhaustive by
-  design (every documented behavior of these modules has a test, not just
-  the happy path).
+  `test_storage.cpp`, `test_listfile.cpp`, `test_completion.cpp`) —
+  argument parsing, csv/json escaping, locale-name parsing, error-message
+  mapping, listfile/ID-list loading/diffing, and (for `test_completion.cpp`)
+  that every real flag name for every command actually shows up in the
+  generated shell-completion output. No external dependencies, always run,
+  exhaustive by design (every documented behavior of these modules has a
+  test, not just the happy path).
 - **Integration tests** (`tests/test_integration.cpp`) — run the actual
   compiled `casc-tool` binary as a subprocess against a real CASC storage
   and check its stdout/stderr/exit code. Deliberately not mocked: CascLib's
@@ -255,7 +300,36 @@ can't be opened by `info`/`extract` either. One item from that pass,
 `extract-batch`'s output-path construction never independently
 sanitizing `..`-style path-traversal components (it currently relies
 entirely on an internal, unstated CascLib invariant instead), is a known,
-accepted gap — see `FAILURES.md` item 12 for why it's being left as-is.
+accepted gap — see `FAILURES.md` for why it's being left as-is.
+
+**What `extract-batch --from-list` actually found, run for real against a
+live install (2026-08-16):** a sibling project (`husk`, a WoW model
+converter) had flagged 18,747 distinct FileDataIDs as a "genuine CASC
+re-extraction gap" — textures its own corpus scan couldn't find locally
+under any name, after already filtering out the common false positive of a
+real extraction keeping a file under its own name elsewhere in the tree
+(see that project's own findings for the full methodology). Feeding that
+exact worklist to `extract-batch --from-list` against the live install, one
+storage open, ~13 seconds:
+
+```
+would extract 18742/18747 files, 3287782818 bytes
+```
+
+**18,742 of 18,747 (99.97%) were sitting in CASC the whole time** — not
+actually missing from the game data, just never re-extracted into that
+corpus. The real (non-dry-run) run wrote all 3,287,782,818 bytes to their
+real listfile-resolved paths with zero failures on the recoverable set.
+Only 5 were genuinely absent: 4 with no manifest entry in this build at
+all, and 1 (`creature/treasuregoblinpet/d3textures.blp`, FileDataID
+940334) with a real entry but data that was simply never downloaded to
+this install — the same "known but not shipped" case this README's
+Troubleshooting section already documents, just discovered at scale
+instead of one file at a time. This is the real-world case `--from-list`
+was built for: checking (or filling) a large, externally-produced worklist
+of specific FileDataIDs is a fundamentally different access pattern than
+"walk everything matching a glob," and paying for one storage open instead
+of thousands is the whole point.
 
 ## Design notes (for anyone extending this)
 
@@ -266,6 +340,25 @@ accepted gap — see `FAILURES.md` item 12 for why it's being left as-is.
   someday. Machine-readable output (`--format csv|json`) is how this stays
   composable without every command needing to grow every other command's
   features.
+- **Shell completion is generated, not hand-written, and reads real option
+  metadata instead of a second flag list.** `src/registry.cpp` is the one
+  place that lists every subcommand (name, `run`/`help`, and — the part
+  that matters here — the exact `cli::OptionSpec` vector that command's own
+  argument parser and `--help` already use); `main.cpp`'s dispatch and
+  `src/completion.cpp`'s `--print-completion=<bash|zsh>` generator both read
+  that same table, so a completion script can't silently drift from what
+  the tool actually accepts the way a hand-maintained one could. Ported
+  from the identical design in the sibling `husk` project's `DESIGN.md`
+  ("Shell completion generation") — that version walks a throwaway CLI11
+  `App` tree via CLI11's introspection API since husk uses CLI11 and no C++
+  arg-parsing library (CLI11 included) generates completions on its own;
+  casc-tool doesn't need that step at all, because `cli::OptionSpec` *is*
+  already the live, structured metadata a generator needs — this tool's own
+  minimal, dependency-free parser (see `cli.hpp`'s top comment) turns out to
+  be sufficient introspection surface by construction. What's *not* derived
+  from that metadata (which flags/positionals are directories vs. files,
+  `--format`'s enum values) is a small hand-kept table in
+  `completion.cpp` — see its own top comment for exactly what and why.
 - **`storage::openFile` always resolves through `CascFindFirstFile`, even
   for a bare path, even though CascLib also has a direct by-name open
   mode.** This isn't stylistic — it's a real, empirically-found constraint:

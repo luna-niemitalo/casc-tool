@@ -34,6 +34,8 @@ std::string hex(const BYTE* bytes, size_t count) {
 
 }  // namespace
 
+std::vector<cli::OptionSpec> infoSpecs() { return specs(); }
+
 void helpInfo() {
     std::printf(
         "casc-tool info -- show metadata for one file, without extracting it\n"

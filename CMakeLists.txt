@@ -34,6 +34,8 @@ add_library(casc-tool-lib STATIC
   src/cmd_extract.cpp
   src/cmd_extract_batch.cpp
   src/cmd_diff.cpp
+  src/registry.cpp
+  src/completion.cpp
 )
 target_include_directories(casc-tool-lib PUBLIC src)
 target_link_libraries(casc-tool-lib PUBLIC casc_static)
@@ -53,6 +55,7 @@ if(CASC_TOOL_BUILD_TESTS)
     tests/test_format.cpp
     tests/test_storage.cpp
     tests/test_listfile.cpp
+    tests/test_completion.cpp
     tests/test_integration.cpp
   )
   target_link_libraries(casc-tool-tests PRIVATE casc-tool-lib doctest::doctest)

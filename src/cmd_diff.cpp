@@ -21,6 +21,8 @@ const char* kUsage = "casc-tool diff <listfile-a> <listfile-b> [options]";
 
 }  // namespace
 
+std::vector<cli::OptionSpec> diffSpecs() { return specs(); }
+
 void helpDiff() {
     std::printf(
         "casc-tool diff -- compare two listfile snapshots\n"

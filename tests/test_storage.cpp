@@ -84,3 +84,49 @@ TEST_CASE("a completely unrecognized code doesn't crash and returns *some* text"
 }
 
 }  // TEST_SUITE("storage::errorMessage")
+
+TEST_SUITE("storage::sanitizeRelativePath") {
+// Regression coverage for FAILURES.md's former item 12 (now CHANGELOG.md):
+// extract-batch's output path used to be built straight from a
+// listfile-derived name with no boundary check of its own, relying
+// entirely on an internal CascLib invariant.
+
+TEST_CASE("an ordinary relative path passes through unchanged") {
+    CHECK(storage::sanitizeRelativePath("character/bloodelf/female/bloodelffemale.m2") ==
+          "character/bloodelf/female/bloodelffemale.m2");
+}
+
+TEST_CASE("backslashes (the game's own separator) become forward slashes") {
+    CHECK(storage::sanitizeRelativePath("character\\bloodelf\\female\\bloodelffemale.m2") ==
+          "character/bloodelf/female/bloodelffemale.m2");
+}
+
+TEST_CASE("a leading '..' component is dropped, not honored") {
+    CHECK(storage::sanitizeRelativePath("../../../etc/passwd") == "etc/passwd");
+}
+
+TEST_CASE("a '..' component in the middle is dropped, not just a leading one") {
+    CHECK(storage::sanitizeRelativePath("character/../../../etc/passwd") == "character/etc/passwd");
+}
+
+TEST_CASE("an absolute path loses its leading slash, it never escapes out-dir") {
+    CHECK(storage::sanitizeRelativePath("/etc/passwd") == "etc/passwd");
+}
+
+TEST_CASE("a path that's only '..' components sanitizes to empty") {
+    CHECK(storage::sanitizeRelativePath("../../..") == "");
+}
+
+TEST_CASE("a bare '.' component is dropped like '..' is") {
+    CHECK(storage::sanitizeRelativePath("./character/./a.m2") == "character/a.m2");
+}
+
+TEST_CASE("a run of slashes collapses instead of producing empty path components") {
+    CHECK(storage::sanitizeRelativePath("character//female///a.m2") == "character/female/a.m2");
+}
+
+TEST_CASE("empty input sanitizes to empty output") {
+    CHECK(storage::sanitizeRelativePath("") == "");
+}
+
+}  // TEST_SUITE("storage::sanitizeRelativePath")

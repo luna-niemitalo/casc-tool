@@ -158,3 +158,71 @@ TEST_CASE("a mix of added, removed, and renamed all show up together") {
 }
 
 }  // TEST_SUITE("listfile::diff")
+
+TEST_SUITE("listfile::loadIdList") {
+
+TEST_CASE("parses one decimal FileDataID per line") {
+    TempListfile file("118017\n118034\n118346\n");
+    std::string error;
+    auto ids = listfile::loadIdList(file.string(), &error);
+    CHECK(error.empty());
+    REQUIRE(ids.size() == 3);
+    CHECK(ids[0] == 118017);
+    CHECK(ids[1] == 118034);
+    CHECK(ids[2] == 118346);
+}
+
+TEST_CASE("strips a trailing carriage return (CRLF line endings)") {
+    TempListfile file("118017\r\n");
+    std::string error;
+    auto ids = listfile::loadIdList(file.string(), &error);
+    REQUIRE(ids.size() == 1);
+    CHECK(ids[0] == 118017);
+}
+
+TEST_CASE("skips blank lines without producing a bogus entry") {
+    TempListfile file("1\n\n2\n");
+    std::string error;
+    auto ids = listfile::loadIdList(file.string(), &error);
+    CHECK(ids.size() == 2);
+}
+
+TEST_CASE("skips a line with trailing junk after the digits, rather than truncating it") {
+    // "5abc" must not silently become the ID 5 -- same std::stoul trap
+    // --limit had (see FAILURES.md's history for that one).
+    TempListfile file("1\n5abc\n2\n");
+    std::string error;
+    auto ids = listfile::loadIdList(file.string(), &error);
+    CHECK(error.empty());
+    REQUIRE(ids.size() == 2);
+    CHECK(ids[0] == 1);
+    CHECK(ids[1] == 2);
+}
+
+TEST_CASE("skips a non-numeric line rather than failing the whole parse") {
+    TempListfile file("1\nnotanid\n2\n");
+    std::string error;
+    auto ids = listfile::loadIdList(file.string(), &error);
+    CHECK(error.empty());
+    CHECK(ids.size() == 2);
+}
+
+TEST_CASE("a nonexistent path sets *error and returns empty") {
+    std::string error;
+    auto ids = listfile::loadIdList("/does/not/exist/at/all.txt", &error);
+    CHECK_FALSE(error.empty());
+    CHECK(ids.empty());
+}
+
+TEST_CASE("duplicate IDs in the file are preserved, not deduplicated") {
+    // Unlike load()'s map (last-write-wins), this is a plain worklist --
+    // the caller (extract-batch --from-list) should see exactly what was
+    // in the file, including accidental duplicates, rather than have them
+    // silently vanish.
+    TempListfile file("1\n1\n2\n");
+    std::string error;
+    auto ids = listfile::loadIdList(file.string(), &error);
+    REQUIRE(ids.size() == 3);
+}
+
+}  // TEST_SUITE("listfile::loadIdList")
