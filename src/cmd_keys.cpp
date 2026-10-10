@@ -1,11 +1,8 @@
 #include <cstdio>
-#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <vector>
-
-#include <CascLib.h>
 
 #include "cli.hpp"
 #include "commands.hpp"
@@ -35,28 +32,7 @@ std::vector<cli::OptionSpec> specs() {
 const char* kUsage = "casc-tool keys [options]";
 
 std::string defaultDbCache(const std::string& storagePath) {
-    std::filesystem::path install = std::filesystem::path(storagePath).lexically_normal();
-    if (install.filename().empty()) install = install.parent_path();  // trailing '/'
-    if (install.filename() == "Data") install = install.parent_path();
-    return (install / "_retail_" / "Cache" / "ADB" / "enUS" / "DBCache.bin").string();
-}
-
-bool readStorageFile(HANDLE hStorage, const char* fdid, keys::Bytes& out, std::string* error) {
-    storage::FileHandle hFile;
-    if (!storage::openFile(hStorage, fdid, "", hFile, error)) return false;
-    ULONGLONG size = 0;
-    if (!CascGetFileSize64(hFile.get(), &size)) {
-        *error = storage::errorMessage(GetCascError());
-        return false;
-    }
-    out.resize(size);
-    DWORD read = 0;
-    if (!CascReadFile(hFile.get(), out.data(), static_cast<DWORD>(size), &read) || read != size) {
-        *error = "read " + std::to_string(read) + " of " + std::to_string(size) + " bytes: " +
-                 storage::errorMessage(GetCascError());
-        return false;
-    }
-    return true;
+    return (storage::installRoot(storagePath) / "_retail_" / "Cache" / "ADB" / "enUS" / "DBCache.bin").string();
 }
 
 const char* statusName(keys::Status s) {
@@ -125,8 +101,8 @@ int runKeys(const std::vector<std::string>& rawArgs) {
     if (!storage::open(opts, hStorage)) return 1;
 
     keys::Bytes keyDb2, lookupDb2;
-    if (!readStorageFile(hStorage.get(), kTactKeyFdid, keyDb2, &error) ||
-        !readStorageFile(hStorage.get(), kTactKeyLookupFdid, lookupDb2, &error)) {
+    if (!storage::readFile(hStorage.get(), kTactKeyFdid, "", keyDb2, &error) ||
+        !storage::readFile(hStorage.get(), kTactKeyLookupFdid, "", lookupDb2, &error)) {
         std::fprintf(stderr, "error: reading key tables from storage: %s\n", error.c_str());
         return 1;
     }

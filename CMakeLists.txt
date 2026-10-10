@@ -36,10 +36,20 @@ add_library(casc-tool-lib STATIC
   src/cmd_diff.cpp
   src/keys.cpp
   src/cmd_keys.cpp
+  src/rootmanifest.cpp
+  src/store.cpp
+  src/cmd_snapshot.cpp
+  src/cmd_mount.cpp
   src/registry.cpp
   src/completion.cpp
 )
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FUSE3 REQUIRED IMPORTED_TARGET fuse3)
+target_link_libraries(casc-tool-lib PUBLIC PkgConfig::FUSE3)
 target_include_directories(casc-tool-lib PUBLIC src)
+# For CascLib's own MD5 (hashes/md5.h): already compiled into casc_static,
+# and CKeys are MD5s, so reuse it instead of adding a crypto dependency.
+target_include_directories(casc-tool-lib PRIVATE vendor/CascLib/src)
 target_link_libraries(casc-tool-lib PUBLIC casc_static)
 
 add_executable(casc-tool src/main.cpp)
@@ -59,6 +69,7 @@ if(CASC_TOOL_BUILD_TESTS)
     tests/test_listfile.cpp
     tests/test_completion.cpp
     tests/test_keys.cpp
+    tests/test_store.cpp
     tests/test_integration.cpp
   )
   target_link_libraries(casc-tool-tests PRIVATE casc-tool-lib doctest::doctest)

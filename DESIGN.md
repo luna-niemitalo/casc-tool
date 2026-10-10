@@ -1,8 +1,21 @@
-# casc-tool — build history store (design, not yet built)
+# casc-tool — build history store
 
-Status: **target**. Nothing in this document exists in code yet; README.md
-describes the current tool. This section becomes "current" piece by piece as
-the commands below land.
+## Status (2026-10-10)
+
+**Built:** the store layout (`src/store.cpp`: objects, builds, `tags/`),
+the MFST v2 parser + enUS selection (`src/rootmanifest.cpp`, selection
+spot-checked equal to CascLib's on FDIDs with several CKeys), `snapshot`
+(including `--seed-from`, which covers importing *the current build* from an
+existing export), and `mount` (read-only FUSE, verified byte-exact against
+the export on 3,000 files).
+
+**Not built yet:** `import-export` (needed for builds no longer installed,
+i.e. `wow_export_old`), `builds`, `changes`, `history`, `get`, `view`,
+`prune`, and storing listfile snapshots in the store: `mount` takes a
+`--listfile` path directly, and `.listfile` reports that path.
+
+Everything below marked as a command or layout element is target unless
+listed as built here.
 
 ## Problem
 
@@ -44,10 +57,13 @@ build B is `manifest[B][fdid] → objects/<ckey>`.
   builds/<label>/                                   label e.g. 12.1.0.69933
     ROOT            raw root manifest bytes (the authoritative record)
     manifest.tsv    derived from ROOT: fdid  locale  content_flags  ckey   (sorted)
-    missing.tsv     fdid  ckey  reason      rows whose object is not in the store
-    meta.json       version, build key, cdn key, source, ingest date
-  listfiles/<md5>.csv                              listfile snapshots by content hash
-  views/<label>/…                                  optional browsable tree, disposable
+    missing.tsv     fdid  ckey  reason      enUS FDIDs with no object: not-fetched,
+                                            encrypted:<KEYNAME>, unreadable:<code>
+    meta.json       label, product, locale, counts, snapshot time
+  tags/<name>                                       one line: the label (live, ptr, beta)
+  tmp/                                              object staging; safe to empty when idle
+  listfiles/<md5>.csv                              (target) listfile snapshots by content hash
+  views/<label>/…                                  (target) browsable tree, disposable
 ```
 
 Everything is plain files: `ls`, `grep`, `md5sum`, `join` work on the store

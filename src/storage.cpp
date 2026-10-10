@@ -289,6 +289,33 @@ std::string missingKeyPhrase(HANDLE hStorage) {
 
 }  // namespace
 
+bool readFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, std::vector<uint8_t>& out,
+              std::string* errorOut) {
+    FileHandle hFile;
+    if (!openFile(hStorage, idOrPath, listFile, hFile, errorOut)) return false;
+    ULONGLONG size = 0;
+    if (!CascGetFileSize64(hFile.get(), &size)) {
+        *errorOut = "couldn't size '" + idOrPath + "': " + errorMessage(GetCascError());
+        return false;
+    }
+    out.resize(size);
+    DWORD read = 0;
+    if (!CascReadFile(hFile.get(), out.data(), static_cast<DWORD>(size), &read) || read != size) {
+        DWORD errCode = GetCascError();
+        *errorOut = "read " + std::to_string(read) + " of " + std::to_string(size) + " bytes of '" + idOrPath +
+                    "': " + (errCode == ERROR_FILE_ENCRYPTED ? missingKeyPhrase(hStorage) : errorMessage(errCode));
+        return false;
+    }
+    return true;
+}
+
+std::filesystem::path installRoot(const std::string& storagePath) {
+    std::filesystem::path install = std::filesystem::path(storagePath).lexically_normal();
+    if (install.filename().empty()) install = install.parent_path();  // trailing '/'
+    if (install.filename() == "Data") install = install.parent_path();
+    return install;
+}
+
 bool copyToFile(HANDLE hStorage, HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten,
                 std::string* errorOut, bool allowOvercomeEncrypted, std::string* overcomeNote) {
     std::filesystem::path path(outPath);

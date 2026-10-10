@@ -219,6 +219,18 @@ for a command's exact options. Summary of what each is for:
   key's name but hasn't been sent its value yet — locked content). Hotfix
   keys only exist in your local cache, so re-run after playing.
 
+- **`snapshot <store-dir>`** — record the installed build into a build
+  history store: every distinct enUS file stored once, named by its CKey
+  (which is its MD5), plus the build's ROOT manifest. Later builds add only
+  what changed. `--seed-from <export-dir>` clones matching files from an
+  existing export instead of extracting them (each one hash-verified);
+  `--tag` defaults to `live` for `wow`. See DESIGN.md for the layout.
+
+- **`mount <store-dir> <mountpoint>`** — browse every stored build as a
+  read-only filesystem: `<mnt>/live/<listfile path>`,
+  `<mnt>/builds/<label>/…`, `_by_fdid/<id>`, `.missing`. Needs no root
+  (goes through `fusermount3`); unmount with `fusermount3 -u <mountpoint>`.
+
 Every storage-touching command shares the same five options:
 `--storage`, `--listfile`, `--locale`, `--keys`, `--product` — run any
 command's `--help` to see the full description of each; they behave

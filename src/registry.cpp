@@ -18,6 +18,12 @@ const std::map<std::string, Command>& commandTable() {
         {"keys",
          {commands::runKeys, commands::helpKeys, commands::keysSpecs,
           "harvest TACT keys from game data and the hotfix cache"}},
+        {"snapshot",
+         {commands::runSnapshot, commands::helpSnapshot, commands::snapshotSpecs,
+          "record the installed build into a build history store"}},
+        {"mount",
+         {commands::runMount, commands::helpMount, commands::mountSpecs,
+          "browse every stored build as a read-only filesystem"}},
     };
     return table;
 }

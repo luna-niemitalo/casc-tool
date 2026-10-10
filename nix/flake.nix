@@ -56,6 +56,12 @@
           ccache
           doctest
         ];
+
+        # Linked by `mount`. Mounting itself goes through NixOS's setuid
+        # /run/wrappers/bin/fusermount3, not anything from here.
+        libs = with pkgs; [
+          fuse3
+        ];
       in
       {
         packages.default = pkgs.stdenv.mkDerivation {
@@ -66,7 +72,9 @@
           nativeBuildInputs = [
             pkgs.cmake
             pkgs.ninja
+            pkgs.pkg-config
           ];
+          buildInputs = libs;
 
           # vendor/CascLib doesn't exist in appSource (see above) -- drop in
           # the fetched CascLib source right after unpacking, before cmake
@@ -91,7 +99,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = cpp;
+          packages = cpp ++ libs;
 
           CCACHE_DIR = "/media/luna/cache/ccache";
 

@@ -10,6 +10,8 @@ _casc_tool() {
         'info:show metadata for one file'
         'keys:harvest TACT keys from game data and the hotfix cache'
         'list:list files in a CASC storage'
+        'mount:browse every stored build as a read-only filesystem'
+        'snapshot:record the installed build into a build history store'
     )
 
     if (( CURRENT == 2 )); then
@@ -84,6 +86,27 @@ _casc_tool() {
                 '--format[Output format. Default: text]:value:(text csv json)' \
                 '--limit[Max rows to print, 0 = unlimited. Default: 100 (applies to every format)]:value:_files' \
                 '*:arg:_files'
+            ;;
+        mount)
+            _arguments \
+                '(-h --help)'{-h,--help}'[print help and exit]' \
+                '--listfile[Names the tree (FileDataID<->path). Default: listfile.csv (current directory). Remount to switch]:value:_files' \
+                '--foreground[Stay attached to the terminal instead of daemonizing (logs to stderr)]' \
+                '*:arg:_files -/'
+            ;;
+        snapshot)
+            _arguments \
+                '(-h --help)'{-h,--help}'[print help and exit]' \
+                '--storage[CASC storage root (a directory containing .build.info). Default: . (current directory)]:value:_files -/' \
+                '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
+                '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
+                '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--label[Build label. Default: the Version column of .build.info for --product (e.g. 12.1.0.69933)]:value:_files' \
+                '--tag[Point this tag at the build. Default by --product: wow -> live, wowt -> ptr, wow_beta -> beta]:value:_files' \
+                '--seed-from[An existing export tree (files at their listfile paths): any file whose md5 matches the needed CKey is cloned in instead of extracted. Verified, so a wrong file is just skipped]:value:_files -/' \
+                '--mask[Only fetch objects for FDIDs whose listfile path matches (the manifest still records the whole build; the rest is listed as not-fetched in missing.tsv)]:value:_files' \
+                '*:arg:_files -/'
             ;;
     esac
 }

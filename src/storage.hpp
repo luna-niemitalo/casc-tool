@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -127,6 +128,17 @@ bool checkListFileExists(const std::string& path, std::string* errorOut);
 // going through Find first, failed with ERROR_FILE_NOT_FOUND).
 bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, FileHandle& out,
               std::string* errorOut);
+
+// Opens (as openFile above) and reads a whole file into memory, for the
+// small-to-moderate files commands parse themselves (ROOT, key tables).
+// Fails on any read error, encryption included -- no zero-fill fallback.
+bool readFile(HANDLE hStorage, const std::string& idOrPath, const std::string& listFile, std::vector<uint8_t>& out,
+              std::string* errorOut);
+
+// The install directory a --storage value refers to: --storage itself, or
+// its parent when --storage is the install's Data/ directory (both forms
+// open fine in CascLib). Where .build.info and _retail_/Cache live.
+std::filesystem::path installRoot(const std::string& storagePath);
 
 // Streams an already-open file to disk in chunks, creating parent
 // directories as needed. Shared by `extract` and `extract-batch` so the

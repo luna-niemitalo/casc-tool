@@ -35,13 +35,16 @@ namespace {
 // (--listfile, --keys, --from-list, diff's positionals, ...) is a plain
 // file. Kept as its own tiny set rather than inferring from valueHint text,
 // since "<path>" is used for both storage and listfile today.
-bool isDirFlag(const std::string& flagName) { return flagName == "--storage"; }
+bool isDirFlag(const std::string& flagName) { return flagName == "--storage" || flagName == "--seed-from"; }
 
-// extract-batch is the one command whose last positional (out-dir) is a
-// directory the user is choosing to create/reuse, not a file to open --
-// worth completing as such. Every other command's bare positionals are
-// files (a model/listfile path) or a FileDataID, both file-completion-ish.
-bool lastPositionalIsDir(const std::string& commandName) { return commandName == "extract-batch"; }
+// Commands whose last positional is a directory: extract-batch's out-dir,
+// snapshot's store, mount's mountpoint. Every other command's bare
+// positionals are files (a model/listfile path) or a FileDataID, both
+// file-completion-ish (mount's first positional, the store, completes fine
+// as a file since file completion includes directories).
+bool lastPositionalIsDir(const std::string& commandName) {
+    return commandName == "extract-batch" || commandName == "snapshot" || commandName == "mount";
+}
 
 // Pulls an explicit value enum out of a valueHint like "<text|csv|json>",
 // or returns an empty vector if the hint isn't pipe-delimited (e.g. "<n>",

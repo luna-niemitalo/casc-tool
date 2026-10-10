@@ -4,7 +4,7 @@ _casc_tool_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local subcommands="diff extract extract-batch info keys list"
+    local subcommands="diff extract extract-batch info keys list mount snapshot"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
@@ -193,6 +193,64 @@ _casc_tool_completions() {
                 return
             fi
             COMPREPLY=($(compgen -f -- "$cur"))
+            ;;
+        mount)
+            case "$prev" in
+                --listfile)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+            esac
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--help -h --listfile --foreground" -- "$cur"))
+                return
+            fi
+            compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))
+            ;;
+        snapshot)
+            case "$prev" in
+                --storage)
+                    compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))
+                    return
+                    ;;
+                --listfile)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --locale)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --keys)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --product)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --label)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --tag)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --seed-from)
+                    compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))
+                    return
+                    ;;
+                --mask)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+            esac
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --label --tag --seed-from --mask" -- "$cur"))
+                return
+            fi
+            compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))
             ;;
     esac
 }

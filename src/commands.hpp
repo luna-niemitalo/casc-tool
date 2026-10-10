@@ -42,4 +42,12 @@ int runKeys(const std::vector<std::string>& args);
 void helpKeys();
 std::vector<cli::OptionSpec> keysSpecs();
 
+int runSnapshot(const std::vector<std::string>& args);
+void helpSnapshot();
+std::vector<cli::OptionSpec> snapshotSpecs();
+
+int runMount(const std::vector<std::string>& args);
+void helpMount();
+std::vector<cli::OptionSpec> mountSpecs();
+
 }  // namespace commands

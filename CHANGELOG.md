@@ -7,6 +7,22 @@ nothing here is actionable. Newest first.
 
 ---
 
+## 2026-10-10 — Build history store: `snapshot` and `mount`
+
+First slice of DESIGN.md. `snapshot` records the installed build as its
+ROOT plus content-addressed objects (`objects/ab/cd/<ckey>`, only written
+after an MD5 check against the CKey); `--seed-from` clones matching files
+out of an existing export (copy_file_range → ZFS block cloning).
+`mount` serves every stored build read-only over FUSE, named by a
+listfile, with `live`/`ptr`/`beta` tag links. The enUS selection mirrors
+CascLib's root handler (checked equal on FDIDs that carry several CKeys);
+a mount test against `wow_export` matched 3,000/3,000 files byte for byte.
+Adds fuse3 to the flake (approved 2026-10-10).
+
+Also: extract/extract-batch errors now name the missing TACT key.
+
+---
+
 ## 2026-10-10 — `keys`: harvest TACT keys from the install and hotfix cache
 
 New command (`src/cmd_keys.cpp`, parsing in `src/keys.cpp`, unit tests on
