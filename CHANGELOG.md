@@ -7,6 +7,20 @@ nothing here is actionable. Newest first.
 
 ---
 
+## 2026-10-10 — `keys`: harvest TACT keys from the install and hotfix cache
+
+New command (`src/cmd_keys.cpp`, parsing in `src/keys.cpp`, unit tests on
+synthetic buffers in `tests/test_keys.cpp`). Reads `tactkey.db2` /
+`tactkeylookup.db2` from storage by FileDataID, plus TactKey/TactKeyLookup
+hotfix rows and BroadcastText key payloads from `DBCache.bin` (v9), and
+classifies each key name against `--keys` as new / known / name-only.
+First real run (12.1.0.69933, 75,401 hotfix entries): 0 new, 68 known, 94
+name-only. Motivating case: the 20 encrypted Midnight housing WMOs (see
+`development/MFOB_CASC_REPORT.md`) need key `3B53C72B48FAD89F`, which the
+client names (TactKeyLookup ID 8277) but hasn't been sent.
+
+---
+
 ## 2026-08-16 — Partial-encryption recovery, default on (`extract`/`extract-batch`)
 
 `storage::copyToFile` (`src/storage.cpp`) now recovers from a partially

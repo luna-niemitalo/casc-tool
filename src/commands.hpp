@@ -38,4 +38,8 @@ int runDiff(const std::vector<std::string>& args);
 void helpDiff();
 std::vector<cli::OptionSpec> diffSpecs();
 
+int runKeys(const std::vector<std::string>& args);
+void helpKeys();
+std::vector<cli::OptionSpec> keysSpecs();
+
 }  // namespace commands

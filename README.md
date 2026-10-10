@@ -209,6 +209,16 @@ for a command's exact options. Summary of what each is for:
   actually add" if you keep old listfile downloads around before replacing
   them with a fresh one.
 
+- **`keys`** — harvest TACT decryption keys from everywhere a client
+  receives them: `tactkey.db2`/`tactkeylookup.db2` in the storage, plus
+  hotfix rows and BroadcastText key payloads in
+  `_retail_/Cache/ADB/enUS/DBCache.bin` (`--dbcache` to point elsewhere).
+  Compared against `--keys`: default output is only the *new* keys as
+  `NAME KEY` lines, ready to append to a keys file; `--format csv|json`
+  lists every name as `new`, `known`, or `name-only` (the client knows the
+  key's name but hasn't been sent its value yet — locked content). Hotfix
+  keys only exist in your local cache, so re-run after playing.
+
 Every storage-touching command shares the same five options:
 `--storage`, `--listfile`, `--locale`, `--keys`, `--product` — run any
 command's `--help` to see the full description of each; they behave

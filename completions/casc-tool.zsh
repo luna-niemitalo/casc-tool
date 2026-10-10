@@ -8,6 +8,7 @@ _casc_tool() {
         'extract:extract a single file to disk'
         'extract-batch:bulk-extract matching files to a directory'
         'info:show metadata for one file'
+        'keys:harvest TACT keys from game data and the hotfix cache'
         'list:list files in a CASC storage'
     )
 
@@ -57,6 +58,18 @@ _casc_tool() {
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
                 '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
                 '--format[Output format. Default: text]:value:(text json)' \
+                '*:arg:_files'
+            ;;
+        keys)
+            _arguments \
+                '(-h --help)'{-h,--help}'[print help and exit]' \
+                '--storage[CASC storage root (a directory containing .build.info). Default: . (current directory)]:value:_files -/' \
+                '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
+                '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
+                '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--dbcache[Hotfix cache to read. Default: <install>/_retail_/Cache/ADB/enUS/DBCache.bin, where <install> is --storage (or its parent, if --storage is the Data directory)]:value:_files' \
+                '--format[Output format. Default: text (only NEW keys, as '\''NAME KEY'\'' lines -- appendable to a keys file); csv/json list every harvested name with its status]:value:(text csv json)' \
                 '*:arg:_files'
             ;;
         list)

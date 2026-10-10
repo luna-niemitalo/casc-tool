@@ -15,6 +15,9 @@ const std::map<std::string, Command>& commandTable() {
           "bulk-extract matching files to a directory"}},
         {"diff",
          {commands::runDiff, commands::helpDiff, commands::diffSpecs, "compare two listfile snapshots"}},
+        {"keys",
+         {commands::runKeys, commands::helpKeys, commands::keysSpecs,
+          "harvest TACT keys from game data and the hotfix cache"}},
     };
     return table;
 }

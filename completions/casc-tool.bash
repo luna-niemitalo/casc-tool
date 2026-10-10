@@ -4,7 +4,7 @@ _casc_tool_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local subcommands="diff extract extract-batch info list"
+    local subcommands="diff extract extract-batch info keys list"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
@@ -116,6 +116,43 @@ _casc_tool_completions() {
             esac
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --format" -- "$cur"))
+                return
+            fi
+            COMPREPLY=($(compgen -f -- "$cur"))
+            ;;
+        keys)
+            case "$prev" in
+                --storage)
+                    compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))
+                    return
+                    ;;
+                --listfile)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --locale)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --keys)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --product)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --dbcache)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "text csv json" -- "$cur"))
+                    return
+                    ;;
+            esac
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --dbcache --format" -- "$cur"))
                 return
             fi
             COMPREPLY=($(compgen -f -- "$cur"))
