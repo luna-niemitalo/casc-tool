@@ -2,7 +2,7 @@
   description = "casc-tool: CASC storage browser/extractor CLI";
 
   inputs = {
-    pins.url = "path:/home/luna/nix/pins";
+    pins.url = "path:/etc/nixos/pins";
     nixpkgs.follows = "pins/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     # CascLib is vendored as a git submodule under vendor/CascLib for local
