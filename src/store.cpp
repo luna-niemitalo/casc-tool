@@ -73,7 +73,7 @@ bool Store::putBytes(const CKey& key, const uint8_t* data, size_t size, std::str
     return commit(key, staged, error);
 }
 
-bool Store::putFile(const CKey& key, const fs::path& source, std::string* error) {
+bool Store::cloneIn(const CKey& key, const fs::path& source, std::string* error) {
     fs::path staged = stagingPath();
     std::error_code ec;
     fs::create_directories(staged.parent_path(), ec);
@@ -100,6 +100,24 @@ bool Store::putFile(const CKey& key, const fs::path& source, std::string* error)
         return false;
     }
     return commit(key, staged, error);
+}
+
+// Caller (adoptFile) has just hashed `source` to `key`; see its contract.
+bool Store::moveIn(const CKey& key, const fs::path& source, std::string* error) {
+    fs::path target = objectPath(key);
+    std::error_code ec;
+    if (fs::exists(target, ec)) {
+        *error = "already stored";  // a duplicate copy; leave it where it is
+        return false;
+    }
+    fs::create_directories(target.parent_path(), ec);
+    fs::rename(source, target, ec);
+    if (ec) {
+        *error = "couldn't move " + source.string() + " to " + target.string() + ": " + ec.message();
+        return false;
+    }
+    fs::permissions(target, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read, ec);
+    return true;
 }
 
 std::vector<std::string> Store::builds() const {

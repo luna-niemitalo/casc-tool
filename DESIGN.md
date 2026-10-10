@@ -5,9 +5,13 @@
 **Built:** the store layout (`src/store.cpp`: objects, builds, `tags/`),
 the MFST v2 parser + enUS selection (`src/rootmanifest.cpp`, selection
 spot-checked equal to CascLib's on FDIDs with several CKeys), `snapshot`
-(including `--seed-from`, which covers importing *the current build* from an
-existing export), and `mount` (read-only FUSE, verified byte-exact against
-the export on 3,000 files).
+(including `--seed-from`, content-matched, which covers importing *the
+current build* from an existing export; `--seed-move` converts one in
+place), `mount` (read-only FUSE, verified byte-exact against the export on
+3,000 files), and `scripts/convert-export-to-store.nu` (rehearsed on a
+scratch copy, not yet run on the real export). Planned layout:
+`/media/luna/data/wow_storage` (store, old tree under `legacy/`) mounted at
+`/media/luna/wow_export`.
 
 **Not built yet:** `import-export` (needed for builds no longer installed,
 i.e. `wow_export_old`), `builds`, `changes`, `history`, `get`, `view`,
@@ -72,10 +76,13 @@ uncompressed (3.2 M rows incl. locale variants).
 
 ## Invariants
 
-1. **`objects/<k>` exists ⇒ md5(contents) == k.** Objects are written to a
-   temp name, hashed, and renamed into place only on match. Zero-filled
-   partial-encryption output (README, "partial-encryption fallback") never
-   becomes an object — it goes to `missing.tsv` with reason `partial`.
+1. **`objects/<k>` exists ⇒ md5(contents) == k.** Extracted and cloned
+   objects are written to a temp name, hashed, and renamed into place only
+   on match. `--seed-move` hashes the file where it lies and then renames
+   it, which holds only while nothing else writes the seed tree (true for
+   an export being converted). Snapshot never uses the zero-fill fallback
+   (README, "partial-encryption fallback"): an unreadable file goes to
+   `missing.tsv` as `encrypted:<KEYNAME>` instead.
 2. **Objects are immutable and never deleted implicitly.** The store is
    append-only; removal only via an explicit `prune` (drop builds, then
    delete objects no remaining manifest references).

@@ -18,7 +18,6 @@
 
 #include "cli.hpp"
 #include "commands.hpp"
-#include "listfile.hpp"
 #include "rootmanifest.hpp"
 #include "storage.hpp"
 #include "store.hpp"
@@ -41,8 +40,11 @@ std::vector<cli::OptionSpec> specs() {
     s.push_back({"--tag", true, "<name>",
                  "Point this tag at the build. Default by --product: wow -> live, wowt -> ptr, wow_beta -> beta"});
     s.push_back({"--seed-from", true, "<dir>",
-                 "An existing export tree (files at their listfile paths): any file whose md5 matches the "
-                 "needed CKey is cloned in instead of extracted. Verified, so a wrong file is just skipped"});
+                 "An existing export tree: every file in it is hashed, and any whose content is a needed CKey "
+                 "is cloned in instead of extracted. Matching is by content, so the tree's naming doesn't matter"});
+    s.push_back({"--seed-move", false, "",
+                 "With --seed-from on the store's own filesystem: move matching files into the store instead of "
+                 "cloning them (converts an export in place). Non-matching files are left where they are"});
     s.push_back({"--mask", true, "<glob>",
                  "Only fetch objects for FDIDs whose listfile path matches (the manifest still records the "
                  "whole build; the rest is listed as not-fetched in missing.tsv)"});
@@ -170,6 +172,22 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
     }
     std::string tag = args.optionOr("--tag", defaultTag(product));
     auto seedFrom = args.option("--seed-from");
+    auto seedMode = args.flag("--seed-move") ? store::Store::Adopt::Move : store::Store::Adopt::Clone;
+    if (args.flag("--seed-move") && !seedFrom) {
+        std::fprintf(stderr, "error: --seed-move needs --seed-from <dir>\n");
+        return 2;
+    }
+    if (seedFrom) {
+        // A seed tree *inside* the store (e.g. <store>/legacy) is the intended
+        // in-place conversion; one that *contains* the store would walk objects/.
+        fs::path seedAbs = fs::weakly_canonical(*seedFrom), storeAbs = fs::weakly_canonical(st.root());
+        auto [s, t] = std::mismatch(seedAbs.begin(), seedAbs.end(), storeAbs.begin(), storeAbs.end());
+        if (s == seedAbs.end()) {
+            std::fprintf(stderr, "error: --seed-from %s contains the store %s -- seed from a subdirectory instead\n",
+                         seedAbs.string().c_str(), storeAbs.string().c_str());
+            return 2;
+        }
+    }
     auto mask = args.option("--mask");
 
     storage::StorageHandle hStorage;
@@ -239,35 +257,48 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
     std::mutex failuresMutex;
 
     if (seedFrom && !wanted.empty()) {
-        std::string listError;
-        auto names = listfile::load(listFile, &listError);
-        if (!listError.empty()) {
-            std::fprintf(stderr, "error: --seed-from needs names: %s\n", listError.c_str());
+        // By content, not by path: every file under the seed tree is hashed and
+        // adopted if it is a wanted CKey. Robust to the exporter's naming (an
+        // older listfile, _unresolved/ conventions) at the cost of reading files
+        // that turn out stale -- those simply stay where they are.
+        std::vector<fs::path> files;
+        uint64_t totalBytes = 0;
+        std::error_code ec;
+        for (auto it = fs::recursive_directory_iterator(*seedFrom, ec); it != fs::recursive_directory_iterator();
+             it.increment(ec)) {
+            if (ec) break;
+            if (!it->is_regular_file(ec) || it->is_symlink(ec)) continue;
+            files.push_back(it->path());
+            totalBytes += it->file_size(ec);
+        }
+        if (ec) {
+            std::fprintf(stderr, "error: walking %s: %s\n", seedFrom->c_str(), ec.message().c_str());
             return 1;
         }
-        std::vector<std::pair<store::CKey, fs::path>> jobs;
-        for (const auto& [ckey, fdid] : wanted) {
-            auto n = names.find(fdid);
-            if (n == names.end()) continue;
-            std::string rel = storage::sanitizeRelativePath(n->second);
-            fs::path candidate = fs::path(*seedFrom) / rel;
-            std::error_code ec;
-            if (!rel.empty() && fs::is_regular_file(candidate, ec)) jobs.emplace_back(ckey, candidate);
-        }
-        std::atomic<size_t> next{0}, done{0}, seeded{0};
+        std::fprintf(stderr, "seeding from %s: %zu files, %.1f GB to hash (%s)\n", seedFrom->c_str(), files.size(),
+                     double(totalBytes) / 1e9, seedMode == store::Store::Adopt::Move ? "move" : "clone");
+
+        std::set<store::CKey> claimed;  // one adoption per CKey; later duplicates stay put
+        std::mutex claimedMutex;
+        auto want = [&](const store::CKey& key) {
+            if (!wanted.count(key)) return false;
+            std::lock_guard<std::mutex> lock(claimedMutex);
+            return claimed.insert(key).second;
+        };
+        std::atomic<size_t> next{0}, done{0}, adopted{0};
         auto worker = [&] {
-            for (size_t i; (i = next++) < jobs.size();) {
+            for (size_t i; (i = next++) < files.size();) {
                 std::string e;
-                if (st.putFile(jobs[i].first, jobs[i].second, &e)) seeded++;
-                if (++done % 1000 == 0) progress("seeding", done, jobs.size());
+                if (st.adoptFile(files[i], seedMode, want, &e)) adopted++;
+                if (++done % 1000 == 0) progress("seeding", done, files.size());
             }
         };
         std::vector<std::thread> threads;
         for (unsigned t = 0; t < kSeedThreads; t++) threads.emplace_back(worker);
         for (auto& t : threads) t.join();
-        progress("seeding", done, jobs.size());
-        std::fprintf(stderr, "\nseeded %zu of %zu candidates from %s (mismatches are stale copies, fetched below)\n",
-                     seeded.load(), jobs.size(), seedFrom->c_str());
+        progress("seeding", done, files.size());
+        std::fprintf(stderr, "\nadopted %zu objects from %zu seed files; the rest (stale, duplicate, not in this "
+                     "build) were left untouched\n", adopted.load(), files.size());
     }
 
     size_t fetched = 0, attempted = 0, remaining = 0;

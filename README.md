@@ -222,9 +222,13 @@ for a command's exact options. Summary of what each is for:
 - **`snapshot <store-dir>`** — record the installed build into a build
   history store: every distinct enUS file stored once, named by its CKey
   (which is its MD5), plus the build's ROOT manifest. Later builds add only
-  what changed. `--seed-from <export-dir>` clones matching files from an
-  existing export instead of extracting them (each one hash-verified);
-  `--tag` defaults to `live` for `wow`. See DESIGN.md for the layout.
+  what changed. `--seed-from <export-dir>` hashes every file of an existing
+  export and clones in any whose content is a needed CKey, instead of
+  extracting it (matching by content, so the export's naming doesn't
+  matter); add `--seed-move` to move them instead, converting an export in
+  place. `scripts/convert-export-to-store.nu` does that whole conversion
+  for `/media/luna/data/wow_export` (`--dry-run` first). `--tag` defaults
+  to `live` for `wow`. See DESIGN.md for the layout.
 
 - **`mount <store-dir> <mountpoint>`** — browse every stored build as a
   read-only filesystem: `<mnt>/live/<listfile path>`,

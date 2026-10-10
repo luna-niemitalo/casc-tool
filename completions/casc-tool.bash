@@ -247,7 +247,7 @@ _casc_tool_completions() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --label --tag --seed-from --mask" -- "$cur"))
+                COMPREPLY=($(compgen -W "--help -h --storage --listfile --locale --keys --product --label --tag --seed-from --seed-move --mask" -- "$cur"))
                 return
             fi
             compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))

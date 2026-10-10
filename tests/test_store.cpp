@@ -139,7 +139,7 @@ TEST_CASE("putBytes stores under objects/ab/cd/<ckey>, read-only, only when the 
     CHECK((perms & fs::perms::owner_write) == fs::perms::none);
 }
 
-TEST_CASE("putBytes and putFile refuse content that doesn't match the key, leaving nothing behind") {
+TEST_CASE("putBytes refuses content that doesn't match the key, leaving nothing behind") {
     TempStore tmp;
     store::Store st(tmp.path());
     auto key = keyFromHex(kAbcMd5);
@@ -147,25 +147,38 @@ TEST_CASE("putBytes and putFile refuse content that doesn't match the key, leavi
     CHECK_FALSE(st.putBytes(key, reinterpret_cast<const uint8_t*>("abd"), 3, &error));
     CHECK(error.find(kAbcMd5) != std::string::npos);
     CHECK_FALSE(st.hasObject(key));
-
-    fs::create_directories(tmp.path());
-    fs::path src = tmp.path() / "src.bin";
-    std::ofstream(src) << "not abc";
-    error.clear();
-    CHECK_FALSE(st.putFile(key, src, &error));
-    CHECK_FALSE(st.hasObject(key));
     CHECK(fs::is_empty(tmp.path() / "tmp"));
 }
 
-TEST_CASE("putFile stores a matching file") {
+TEST_CASE("adoptFile clones a wanted file and leaves the source in place") {
     TempStore tmp;
     store::Store st(tmp.path());
-    fs::create_directories(tmp.path());
-    fs::path src = tmp.path() / "src.bin";
+    fs::create_directories(tmp.path() / "legacy");
+    fs::path src = tmp.path() / "legacy" / "a.bin";
     std::ofstream(src) << "abc";
     std::string error;
-    CHECK(st.putFile(keyFromHex(kAbcMd5), src, &error));
-    CHECK(fs::file_size(st.objectPath(keyFromHex(kAbcMd5))) == 3);
+    auto key = st.adoptFile(src, store::Store::Adopt::Clone, [](const auto&) { return true; }, &error);
+    REQUIRE(key);
+    CHECK(*key == keyFromHex(kAbcMd5));
+    CHECK(fs::exists(src));
+    CHECK(fs::file_size(st.objectPath(*key)) == 3);
+}
+
+TEST_CASE("adoptFile moves a wanted file, and never touches an unwanted one") {
+    TempStore tmp;
+    store::Store st(tmp.path());
+    fs::create_directories(tmp.path() / "legacy");
+    fs::path wantedSrc = tmp.path() / "legacy" / "a.bin";
+    fs::path staleSrc = tmp.path() / "legacy" / "stale.bin";
+    std::ofstream(wantedSrc) << "abc";
+    std::ofstream(staleSrc) << "old content";
+    auto onlyAbc = [](const rootmanifest::CKey& k) { return k == keyFromHex(kAbcMd5); };
+    std::string error;
+    CHECK(st.adoptFile(wantedSrc, store::Store::Adopt::Move, onlyAbc, &error));
+    CHECK_FALSE(fs::exists(wantedSrc));
+    CHECK(st.hasObject(keyFromHex(kAbcMd5)));
+    CHECK_FALSE(st.adoptFile(staleSrc, store::Store::Adopt::Move, onlyAbc, &error));
+    CHECK(fs::exists(staleSrc));
 }
 
 TEST_CASE("tags and builds are read back from the layout") {

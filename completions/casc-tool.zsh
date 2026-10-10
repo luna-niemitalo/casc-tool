@@ -104,7 +104,8 @@ _casc_tool() {
                 '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
                 '--label[Build label. Default: the Version column of .build.info for --product (e.g. 12.1.0.69933)]:value:_files' \
                 '--tag[Point this tag at the build. Default by --product: wow -> live, wowt -> ptr, wow_beta -> beta]:value:_files' \
-                '--seed-from[An existing export tree (files at their listfile paths): any file whose md5 matches the needed CKey is cloned in instead of extracted. Verified, so a wrong file is just skipped]:value:_files -/' \
+                '--seed-from[An existing export tree: every file in it is hashed, and any whose content is a needed CKey is cloned in instead of extracted. Matching is by content, so the tree'\''s naming doesn'\''t matter]:value:_files -/' \
+                '--seed-move[With --seed-from on the store'\''s own filesystem: move matching files into the store instead of cloning them (converts an export in place). Non-matching files are left where they are]' \
                 '--mask[Only fetch objects for FDIDs whose listfile path matches (the manifest still records the whole build; the rest is listed as not-fetched in missing.tsv)]:value:_files' \
                 '*:arg:_files -/'
             ;;
