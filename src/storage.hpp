@@ -154,8 +154,10 @@ bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& l
 // *overcomeNote, if non-null and the fallback actually fired, is set to a
 // human-readable summary of what got zero-filled -- callers should
 // surface this as a warning, not silence it into a plain success.
-bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut,
-                bool allowOvercomeEncrypted = true, std::string* overcomeNote = nullptr);
+// hStorage is the storage hFile came from: encryption messages name the
+// missing key (CascGetNotFoundEncryptionKey is per storage, not per file).
+bool copyToFile(HANDLE hStorage, HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten,
+                std::string* errorOut, bool allowOvercomeEncrypted = true, std::string* overcomeNote = nullptr);
 
 // Neutralizes path-traversal in a CASC-root-derived relative name (from a
 // listfile entry or CascLib's own NameType == CascNameFull) before it's

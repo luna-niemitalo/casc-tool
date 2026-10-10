@@ -152,7 +152,7 @@ int runExtractFromList(const cli::Args& args, const std::string& idsPath, const 
         std::string outPath = outPathForId(id, names, outDir);
         uint64_t written = 0;
         std::string error, overcomeNote;
-        if (storage::copyToFile(hFile.get(), outPath, &written, &error, allowOvercomeEncrypted, &overcomeNote)) {
+        if (storage::copyToFile(hStorage.get(), hFile.get(), outPath, &written, &error, allowOvercomeEncrypted, &overcomeNote)) {
             extracted++;
             totalBytes += written;
             if (!overcomeNote.empty()) {
@@ -293,7 +293,7 @@ int runExtractBatch(const std::vector<std::string>& rawArgs) {
                                 CASC_OPEN_BY_FILEID, hFile.out());
         std::string error, overcomeNote;
         uint64_t written = 0;
-        if (ok) ok = storage::copyToFile(hFile.get(), outPath, &written, &error, allowOvercomeEncrypted, &overcomeNote);
+        if (ok) ok = storage::copyToFile(hStorage.get(), hFile.get(), outPath, &written, &error, allowOvercomeEncrypted, &overcomeNote);
 
         if (ok) {
             extracted++;

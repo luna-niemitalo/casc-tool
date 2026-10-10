@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <unistd.h>
 #include <string>
@@ -499,7 +500,8 @@ TEST_CASE("--strict-encrypted forces the old all-or-nothing failure, even under 
     auto r = runCasc(withStorage({"extract", "1266429", outFile, "--strict-encrypted"}));
 
     CHECK(r.exitCode != 0);
-    CHECK(r.err.find("file is encrypted and the decryption key is missing") != std::string::npos);
+    CHECK_MESSAGE(std::regex_search(r.err, std::regex("decryption key [0-9A-F]{16} is missing")),
+                  "expected the missing key to be named, got:\n" << r.err);
     CHECK_FALSE(std::filesystem::exists(outFile));
 }
 

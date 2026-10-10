@@ -275,10 +275,22 @@ DWORD streamChunks(HANDLE hFile, FILE* out, uint64_t* bytesWritten) {
     return errCode;
 }
 
+// CascLib remembers the last key name it failed on, per storage, and never
+// clears it -- so this is only meaningful right after a read on this storage
+// failed with ERROR_FILE_ENCRYPTED. Printed as the u64 TACTKeys/--keys files
+// use, so the name can be grepped straight against a keys file or `keys`.
+std::string missingKeyPhrase(HANDLE hStorage) {
+    ULONGLONG name = 0;
+    if (!CascGetNotFoundEncryptionKey(hStorage, &name)) return "the decryption key is missing";
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "decryption key %016llX is missing", static_cast<unsigned long long>(name));
+    return buf;
+}
+
 }  // namespace
 
-bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten, std::string* errorOut,
-                bool allowOvercomeEncrypted, std::string* overcomeNote) {
+bool copyToFile(HANDLE hStorage, HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten,
+                std::string* errorOut, bool allowOvercomeEncrypted, std::string* overcomeNote) {
     std::filesystem::path path(outPath);
     if (path.has_parent_path()) {
         std::error_code ec;
@@ -305,7 +317,9 @@ bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten
 
     if (errCode != ERROR_FILE_ENCRYPTED || !allowOvercomeEncrypted) {
         std::filesystem::remove(outPath);
-        *errorOut = "read failed after " + std::to_string(total) + " bytes: " + errorMessage(errCode);
+        *errorOut = "read failed after " + std::to_string(total) + " bytes: " +
+                    (errCode == ERROR_FILE_ENCRYPTED ? missingKeyPhrase(hStorage) + " (see --keys)"
+                                                     : errorMessage(errCode));
         return false;
     }
 
@@ -327,7 +341,7 @@ bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten
 
     if (encryptedFraction > kMaxOvercomeEncryptedFraction) {
         std::filesystem::remove(outPath);
-        *errorOut = "file is encrypted and the decryption key is missing (see --keys) -- at least " +
+        *errorOut = "file is encrypted and " + missingKeyPhrase(hStorage) + " (see --keys) -- at least " +
                     std::string(pct) + "% of this file's content is affected, over the " +
                     std::to_string(static_cast<int>(kMaxOvercomeEncryptedFraction * 100)) +
                     "% cutoff for writing a partially-recovered file anyway";
@@ -362,8 +376,8 @@ bool copyToFile(HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten
 
     if (bytesWritten) *bytesWritten = total2;
     if (overcomeNote) {
-        *overcomeNote = "at least " + std::string(pct) +
-                        "% of this file's content is zero-filled (encrypted, key missing -- see --keys); "
+        *overcomeNote = "at least " + std::string(pct) + "% of this file's content is zero-filled (encrypted, " +
+                        missingKeyPhrase(hStorage) + " -- see --keys); "
                         "wrote it anyway, under the " +
                         std::to_string(static_cast<int>(kMaxOvercomeEncryptedFraction * 100)) + "% cutoff";
     }

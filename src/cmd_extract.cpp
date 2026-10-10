@@ -85,7 +85,7 @@ int runExtract(const std::vector<std::string>& rawArgs) {
     uint64_t bytesWritten = 0;
     std::string error, overcomeNote;
     bool allowOvercomeEncrypted = !args.flag("--strict-encrypted");
-    if (!storage::copyToFile(hFile.get(), outFile, &bytesWritten, &error, allowOvercomeEncrypted, &overcomeNote)) {
+    if (!storage::copyToFile(hStorage.get(), hFile.get(), outFile, &bytesWritten, &error, allowOvercomeEncrypted, &overcomeNote)) {
         std::fprintf(stderr, "error: %s\n", error.c_str());
         return 1;
     }
