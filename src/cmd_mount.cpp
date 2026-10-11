@@ -107,17 +107,29 @@ NameTree buildNameTree(const std::map<unsigned, std::string>& names, const std::
     return t;
 }
 
+// _by_fdid is lookup-only: listing ~1.9M entries took ~18 s per readdir,
+// stalling file managers (Dolphin counts every visible folder's items) and
+// doubling any recursive walk of a build. The README is its only listing.
+constexpr const char* kByFdidReadmeName = "README.txt";
+constexpr const char* kByFdidReadme =
+    "Open _by_fdid/<FileDataID> directly, e.g. _by_fdid/1302850.\n"
+    "Entries are not listed here: ~1.9M of them would stall file managers and\n"
+    "double every recursive walk. Files with no listfile name are listed under\n"
+    "_unresolved/.\n";
+
 struct Build {
     std::once_flag once;
     std::string error;
+    struct timespec mtime{};  // of builds/<label>/, shown on every directory of the build
     std::unordered_map<uint32_t, store::CKey> present;  // enUS selection minus missing.tsv
     std::vector<bool> dirUsed;                           // per NameTree dir: holds a present file
-    std::vector<uint32_t> fdids, unresolved;             // sorted, for _by_fdid / _unresolved
+    std::vector<uint32_t> unresolved;                    // sorted, for _unresolved
 };
 
 struct Mount {
     store::Store st;
     NameTree names;
+    struct timespec mtime;  // of the store root, for entries outside any build
     std::mutex buildsMutex;
     std::map<std::string, std::unique_ptr<Build>> builds;
 };
@@ -133,6 +145,8 @@ void loadBuild(Mount& m, const std::string& label, Build& b) {
         b.error = (dir / "ROOT").string() + ": " + b.error;
         return;
     }
+    struct stat dirStat;
+    if (::stat(dir.c_str(), &dirStat) == 0) b.mtime = dirStat.st_mtim;
     auto selected = rootmanifest::select(rows, kMountLocale);
     std::ifstream missing(dir / "missing.tsv");
     std::string line;
@@ -142,7 +156,6 @@ void loadBuild(Mount& m, const std::string& label, Build& b) {
 
     b.dirUsed.assign(m.names.dirs.size(), false);
     for (const auto& [fdid, _] : b.present) {
-        b.fdids.push_back(fdid);
         uint32_t d = fdid < m.names.dirOf.size() ? m.names.dirOf[fdid] : kNoDir;
         if (d == kNoDir) {
             b.unresolved.push_back(fdid);
@@ -150,7 +163,6 @@ void loadBuild(Mount& m, const std::string& label, Build& b) {
         }
         for (; d != kNoDir && !b.dirUsed[d]; d = m.names.dirs[d].parent) b.dirUsed[d] = true;
     }
-    std::sort(b.fdids.begin(), b.fdids.end());
     std::sort(b.unresolved.begin(), b.unresolved.end());
     std::fprintf(stderr, "loaded build %s: %zu files (%zu unnamed by %s)\n", label.c_str(), b.present.size(),
                  b.unresolved.size(), m.names.source.c_str());
@@ -249,6 +261,7 @@ Node resolveInBuild(Mount& m, const std::string& label, Build& b, const std::vec
     if (first == "_by_fdid" || first == "_unresolved") {
         bool unresolvedOnly = first == "_unresolved";
         if (rest.size() == 1) return dirNode(unresolvedOnly ? Node::Unresolved : Node::ByFdid, &b);
+        if (!unresolvedOnly && rest.size() == 2 && rest[1] == kByFdidReadmeName) return textNode(Node::Text, kByFdidReadme);
         uint32_t fdid;
         if (rest.size() != 2 || !parseFdid(rest[1], &fdid)) return {};
         auto it = b.present.find(fdid);
@@ -292,6 +305,7 @@ int fsGetattr(const char* path, struct stat* st, struct fuse_file_info*) {
     std::memset(st, 0, sizeof(*st));
     st->st_uid = ::getuid();
     st->st_gid = ::getgid();
+    st->st_mtim = st->st_ctim = n.build ? n.build->mtime : m.mtime;
     switch (n.kind) {
         case Node::None: return -ENOENT;
         case Node::Dir:
@@ -348,7 +362,7 @@ int fsReaddir(const char* path, void* buf, fuse_fill_dir_t fill, off_t, struct f
             for (const auto& label : m.st.builds()) add(label);
             break;
         case Node::ByFdid:
-            for (uint32_t f : n.build->fdids) add(std::to_string(f));
+            add(kByFdidReadmeName);
             break;
         case Node::Unresolved:
             for (uint32_t f : n.build->unresolved) add(std::to_string(f));
@@ -459,7 +473,10 @@ int runMount(const std::vector<std::string>& rawArgs) {
         std::fprintf(stderr, "error: %s\n", error.c_str());
         return 1;
     }
-    Mount mount{store::Store(fs::absolute(storeDir)), buildNameTree(names, fs::absolute(listFile).string()), {}, {}};
+    struct stat rootStat {};
+    ::stat(storeDir.c_str(), &rootStat);
+    Mount mount{store::Store(fs::absolute(storeDir)), buildNameTree(names, fs::absolute(listFile).string()),
+                rootStat.st_mtim, {}, {}};
     names.clear();
 
     std::string tagSummary;
