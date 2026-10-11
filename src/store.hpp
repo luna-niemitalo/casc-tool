@@ -23,6 +23,10 @@ using CKey = rootmanifest::CKey;
 // md5 of a file's contents; nullopt (with *error) if it can't be read.
 std::optional<CKey> md5File(const std::filesystem::path& path, std::string* error);
 
+// Writes via a .tmp sibling + rename, so a mount or a reader never sees a
+// half-written manifest/meta file. False if the write failed.
+bool writeTextAtomic(const std::filesystem::path& path, const std::string& text);
+
 class Store {
 public:
     explicit Store(std::filesystem::path root) : root_(std::move(root)) {}
@@ -55,6 +59,12 @@ public:
     }
 
     std::filesystem::path buildDir(const std::string& label) const { return root_ / "builds" / label; }
+
+    // Records builds/<label>/ROOT plus the derived manifest.tsv. The same
+    // bytes again is a resume (no-op); different bytes under an existing
+    // label is refused -- a label always means exactly one ROOT.
+    bool recordRoot(const std::string& label, const std::vector<uint8_t>& root,
+                    const std::vector<rootmanifest::Row>& rows, std::string* error) const;
     std::vector<std::string> builds() const;
 
     std::map<std::string, std::string> tags() const;

@@ -35,4 +35,8 @@ std::unordered_map<uint32_t, CKey> select(const std::vector<Row>& rows, uint32_t
 
 std::string hex(const CKey& key);
 
+// manifest.tsv: every row, sorted by FDID (ROOT order kept within one FDID).
+// Derived from ROOT, for grep/join without casc-tool.
+std::string toTsv(const std::vector<Row>& rows);
+
 }  // namespace rootmanifest

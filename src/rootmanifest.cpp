@@ -1,5 +1,7 @@
 #include "rootmanifest.hpp"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace rootmanifest {
@@ -71,6 +73,19 @@ std::unordered_map<uint32_t, CKey> select(const std::vector<Row>& rows, uint32_t
         }
     }
     return chosen;
+}
+
+std::string toTsv(const std::vector<Row>& rows) {
+    std::vector<const Row*> sorted;
+    for (const auto& r : rows) sorted.push_back(&r);
+    std::stable_sort(sorted.begin(), sorted.end(), [](auto* a, auto* b) { return a->fdid < b->fdid; });
+    std::string tsv = "fdid\tlocale\tcontent_flags\tckey\n";
+    char line[96];
+    for (auto* r : sorted) {
+        std::snprintf(line, sizeof(line), "%u\t%08x\t%08x\t", r->fdid, r->localeFlags, r->contentFlags);
+        tsv += line + hex(r->ckey) + "\n";
+    }
+    return tsv;
 }
 
 std::string hex(const CKey& key) {

@@ -7,6 +7,7 @@ _casc_tool() {
         'diff:compare two listfile snapshots'
         'extract:extract a single file to disk'
         'extract-batch:bulk-extract matching files to a directory'
+        'import:ingest an export tree (with its ROOT, or as plain paths) into a store'
         'info:show metadata for one file'
         'keys:harvest TACT keys from game data and the hotfix cache'
         'list:list files in a CASC storage'
@@ -50,6 +51,17 @@ _casc_tool() {
                 '--dry-run[Report what would be extracted (count, total bytes) without writing anything]' \
                 '--strict-encrypted[Never write a file that'\''s partially encrypted with a missing key, even if only a small fraction of it is affected -- the default instead zero-fills and proceeds under 30%]' \
                 '*:arg:_files -/'
+            ;;
+        import)
+            _arguments \
+                '(-h --help)'{-h,--help}'[print help and exit]' \
+                '--label[Build label (required), e.g. 12.0.7.68453 or legacy-wow_export]:value:_files' \
+                '--root[The tree'\''s own ROOT manifest: import as that build, adopting files whose content it lists. Without --root the tree is a path build: every file is recorded under its own path]:value:_files' \
+                '--tag[Point this tag at the imported build (e.g. old, legacy)]:value:_files' \
+                '--move[Move adopted files into the store instead of cloning them (tree must be on the store'\''s filesystem)]' \
+                '--drop-duplicates[Delete tree files whose content the store already holds (hash-verified, so nothing is lost)]' \
+                '--dry-run[Hash and classify everything, report, change nothing]' \
+                '*:arg:_files'
             ;;
         info)
             _arguments \

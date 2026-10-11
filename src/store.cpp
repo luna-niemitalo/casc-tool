@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <iterator>
 #include <unistd.h>
 
 #include "hashes/md5.h"
@@ -120,6 +121,26 @@ bool Store::moveIn(const CKey& key, const fs::path& source, std::string* error) 
     return true;
 }
 
+bool Store::recordRoot(const std::string& label, const std::vector<uint8_t>& root,
+                       const std::vector<rootmanifest::Row>& rows, std::string* error) const {
+    fs::path dir = buildDir(label);
+    fs::path rootPath = dir / "ROOT";
+    if (fs::exists(rootPath)) {
+        std::ifstream in(rootPath, std::ios::binary);
+        std::vector<uint8_t> existing{std::istreambuf_iterator<char>(in), {}};
+        if (existing == root) return true;
+        *error = dir.string() + " already holds a different ROOT -- pick another label";
+        return false;
+    }
+    fs::create_directories(dir);
+    if (!writeTextAtomic(rootPath, std::string(root.begin(), root.end())) ||
+        !writeTextAtomic(dir / "manifest.tsv", rootmanifest::toTsv(rows))) {
+        *error = "couldn't write ROOT/manifest.tsv under " + dir.string();
+        return false;
+    }
+    return true;
+}
+
 std::vector<std::string> Store::builds() const {
     std::vector<std::string> out;
     std::error_code ec;
@@ -145,6 +166,17 @@ void Store::setTag(const std::string& name, const std::string& label) const {
     fs::path staged = root_ / "tags" / ("." + name + ".tmp");
     std::ofstream(staged) << label << "\n";
     fs::rename(staged, root_ / "tags" / name);  // atomic: a mount never sees a half-written tag
+}
+
+bool writeTextAtomic(const fs::path& path, const std::string& text) {
+    fs::path staged = path.string() + ".tmp";
+    std::ofstream out(staged, std::ios::binary);
+    out << text;
+    out.close();
+    if (!out) return false;
+    std::error_code ec;
+    fs::rename(staged, path, ec);
+    return !ec;
 }
 
 std::optional<CKey> md5File(const fs::path& path, std::string* error) {

@@ -18,6 +18,7 @@
 
 #include "cli.hpp"
 #include "commands.hpp"
+#include "ingest.hpp"
 #include "rootmanifest.hpp"
 #include "storage.hpp"
 #include "store.hpp"
@@ -27,11 +28,6 @@ namespace fs = std::filesystem;
 namespace commands {
 
 namespace {
-
-// Seeding is hash-bound on a local disk, not CPU-bound; 8 readers saturated
-// a single ZFS pool in practice without starving the desktop. Not a flag
-// until a second machine shows a different sweet spot.
-constexpr unsigned kSeedThreads = 8;
 
 std::vector<cli::OptionSpec> specs() {
     auto s = storage::commonOptionSpecs();
@@ -101,16 +97,6 @@ std::string nowIso() {
     return buf;
 }
 
-bool writeText(const fs::path& path, const std::string& text) {
-    fs::path staged = path.string() + ".tmp";
-    std::ofstream out(staged, std::ios::binary);
-    out << text;
-    out.close();
-    if (!out) return false;
-    fs::rename(staged, path);
-    return true;
-}
-
 std::set<uint32_t> fdidsMatching(HANDLE hStorage, const std::string& mask, const std::string& listFile) {
     std::set<uint32_t> out;
     CASC_FIND_DATA fd{};
@@ -177,16 +163,10 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
         std::fprintf(stderr, "error: --seed-move needs --seed-from <dir>\n");
         return 2;
     }
-    if (seedFrom) {
-        // A seed tree *inside* the store (e.g. <store>/legacy) is the intended
-        // in-place conversion; one that *contains* the store would walk objects/.
-        fs::path seedAbs = fs::weakly_canonical(*seedFrom), storeAbs = fs::weakly_canonical(st.root());
-        auto [s, t] = std::mismatch(seedAbs.begin(), seedAbs.end(), storeAbs.begin(), storeAbs.end());
-        if (s == seedAbs.end()) {
-            std::fprintf(stderr, "error: --seed-from %s contains the store %s -- seed from a subdirectory instead\n",
-                         seedAbs.string().c_str(), storeAbs.string().c_str());
-            return 2;
-        }
+    if (seedFrom && ingest::containsStore(*seedFrom, st.root())) {
+        std::fprintf(stderr, "error: --seed-from %s contains the store %s -- seed from a subdirectory instead\n",
+                     seedFrom->c_str(), st.root().string().c_str());
+        return 2;
     }
     auto mask = args.option("--mask");
 
@@ -205,36 +185,9 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
     }
 
     fs::path buildDir = st.buildDir(label);
-    fs::path rootPath = buildDir / "ROOT";
-    if (fs::exists(rootPath)) {
-        std::ifstream in(rootPath, std::ios::binary);
-        std::vector<uint8_t> existing{std::istreambuf_iterator<char>(in), {}};
-        if (existing != rootBytes) {
-            std::fprintf(stderr, "error: %s already holds a different ROOT -- pick another --label\n",
-                         buildDir.string().c_str());
-            return 1;
-        }
-        std::fprintf(stderr, "resuming build %s\n", label.c_str());
-    } else {
-        fs::create_directories(buildDir);
-        if (!writeText(rootPath, std::string(rootBytes.begin(), rootBytes.end()))) {
-            std::fprintf(stderr, "error: couldn't write %s\n", rootPath.string().c_str());
-            return 1;
-        }
-    }
-
-    // Derived, for grep/join without casc-tool (DESIGN.md: "Everything is plain files").
-    {
-        std::vector<const rootmanifest::Row*> sorted;
-        for (const auto& r : rows) sorted.push_back(&r);
-        std::stable_sort(sorted.begin(), sorted.end(), [](auto* a, auto* b) { return a->fdid < b->fdid; });
-        std::string tsv = "fdid\tlocale\tcontent_flags\tckey\n";
-        char line[96];
-        for (auto* r : sorted) {
-            std::snprintf(line, sizeof(line), "%u\t%08x\t%08x\t", r->fdid, r->localeFlags, r->contentFlags);
-            tsv += line + rootmanifest::hex(r->ckey) + "\n";
-        }
-        writeText(buildDir / "manifest.tsv", tsv);
+    if (!st.recordRoot(label, rootBytes, rows, &error)) {
+        std::fprintf(stderr, "error: %s\n", error.c_str());
+        return 1;
     }
 
     auto selected = rootmanifest::select(rows, kStoreLocale);
@@ -261,18 +214,11 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
         // adopted if it is a wanted CKey. Robust to the exporter's naming (an
         // older listfile, _unresolved/ conventions) at the cost of reading files
         // that turn out stale -- those simply stay where they are.
-        std::vector<fs::path> files;
         uint64_t totalBytes = 0;
-        std::error_code ec;
-        for (auto it = fs::recursive_directory_iterator(*seedFrom, ec); it != fs::recursive_directory_iterator();
-             it.increment(ec)) {
-            if (ec) break;
-            if (!it->is_regular_file(ec) || it->is_symlink(ec)) continue;
-            files.push_back(it->path());
-            totalBytes += it->file_size(ec);
-        }
-        if (ec) {
-            std::fprintf(stderr, "error: walking %s: %s\n", seedFrom->c_str(), ec.message().c_str());
+        std::string walkError;
+        auto files = ingest::listFiles(*seedFrom, &totalBytes, &walkError);
+        if (!walkError.empty()) {
+            std::fprintf(stderr, "error: %s\n", walkError.c_str());
             return 1;
         }
         std::fprintf(stderr, "seeding from %s: %zu files, %.1f GB to hash (%s)\n", seedFrom->c_str(), files.size(),
@@ -285,19 +231,12 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
             std::lock_guard<std::mutex> lock(claimedMutex);
             return claimed.insert(key).second;
         };
-        std::atomic<size_t> next{0}, done{0}, adopted{0};
-        auto worker = [&] {
-            for (size_t i; (i = next++) < files.size();) {
-                std::string e;
-                if (st.adoptFile(files[i], seedMode, want, &e)) adopted++;
-                if (++done % 1000 == 0) progress("seeding", done, files.size());
-            }
-        };
-        std::vector<std::thread> threads;
-        for (unsigned t = 0; t < kSeedThreads; t++) threads.emplace_back(worker);
-        for (auto& t : threads) t.join();
-        progress("seeding", done, files.size());
-        std::fprintf(stderr, "\nadopted %zu objects from %zu seed files; the rest (stale, duplicate, not in this "
+        std::atomic<size_t> adopted{0};
+        ingest::parallelFor(files.size(), "seeding", [&](size_t i) {
+            std::string e;
+            if (st.adoptFile(files[i], seedMode, want, &e)) adopted++;
+        });
+        std::fprintf(stderr, "adopted %zu objects from %zu seed files; the rest (stale, duplicate, not in this "
                      "build) were left untouched\n", adopted.load(), files.size());
     }
 
@@ -352,13 +291,13 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
         missingTsv += std::to_string(fdid) + "\t" + rootmanifest::hex(ckey) + "\t" + reason + "\n";
         missingCount++;
     }
-    writeText(buildDir / "missing.tsv", missingTsv);
+    store::writeTextAtomic(buildDir / "missing.tsv", missingTsv);
 
     std::string meta = "{\n  \"label\": \"" + label + "\",\n  \"product\": \"" + product +
                        "\",\n  \"locale\": \"enUS\",\n  \"fdids\": " + std::to_string(selected.size()) +
                        ",\n  \"missing\": " + std::to_string(missingCount) + ",\n  \"snapshot_at\": \"" + nowIso() +
                        "\"\n}\n";
-    writeText(buildDir / "meta.json", meta);
+    store::writeTextAtomic(buildDir / "meta.json", meta);
 
     if (!tag.empty()) st.setTag(tag, label);
     std::fprintf(stderr, "build %s: extracted %zu, %zu FDIDs missing (see missing.tsv)%s\n", label.c_str(), fetched,

@@ -50,4 +50,8 @@ int runMount(const std::vector<std::string>& args);
 void helpMount();
 std::vector<cli::OptionSpec> mountSpecs();
 
+int runImport(const std::vector<std::string>& args);
+void helpImport();
+std::vector<cli::OptionSpec> importSpecs();
+
 }  // namespace commands

@@ -4,7 +4,7 @@ _casc_tool_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local subcommands="diff extract extract-batch info keys list mount snapshot"
+    local subcommands="diff extract extract-batch import info keys list mount snapshot"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
@@ -86,6 +86,27 @@ _casc_tool_completions() {
                 return
             fi
             compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur"))
+            ;;
+        import)
+            case "$prev" in
+                --label)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --root)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+                --tag)
+                    COMPREPLY=($(compgen -f -- "$cur"))
+                    return
+                    ;;
+            esac
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--help -h --label --root --tag --move --drop-duplicates --dry-run" -- "$cur"))
+                return
+            fi
+            COMPREPLY=($(compgen -f -- "$cur"))
             ;;
         info)
             case "$prev" in

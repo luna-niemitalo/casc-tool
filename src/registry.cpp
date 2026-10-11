@@ -24,6 +24,9 @@ const std::map<std::string, Command>& commandTable() {
         {"mount",
          {commands::runMount, commands::helpMount, commands::mountSpecs,
           "browse every stored build as a read-only filesystem"}},
+        {"import",
+         {commands::runImport, commands::helpImport, commands::importSpecs,
+          "ingest an export tree (with its ROOT, or as plain paths) into a store"}},
     };
     return table;
 }

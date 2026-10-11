@@ -121,7 +121,13 @@ struct Build {
     std::once_flag once;
     std::string error;
     struct timespec mtime{};  // of builds/<label>/, shown on every directory of the build
-    std::unordered_map<uint32_t, store::CKey> present;  // enUS selection minus missing.tsv
+    // ROOT builds are named by the mount's listfile, keyed by FDID. Path builds
+    // (import without --root) carry their own names: ids are files.tsv rows,
+    // so they have no _by_fdid and nothing is unresolved.
+    const NameTree* tree = nullptr;
+    std::unique_ptr<NameTree> ownTree;
+    bool byFdid = false;
+    std::unordered_map<uint32_t, store::CKey> present;  // ROOT: enUS selection minus missing.tsv
     std::vector<bool> dirUsed;                           // per NameTree dir: holds a present file
     std::vector<uint32_t> unresolved;                    // sorted, for _unresolved
 };
@@ -136,8 +142,7 @@ struct Mount {
 
 Mount& ctx() { return *static_cast<Mount*>(fuse_get_context()->private_data); }
 
-void loadBuild(Mount& m, const std::string& label, Build& b) {
-    fs::path dir = m.st.buildDir(label);
+void loadRootBuild(Mount& m, const fs::path& dir, Build& b) {
     std::ifstream rootIn(dir / "ROOT", std::ios::binary);
     std::vector<uint8_t> root{std::istreambuf_iterator<char>(rootIn), {}};
     auto rows = rootmanifest::parse(root, &b.error);
@@ -145,27 +150,60 @@ void loadBuild(Mount& m, const std::string& label, Build& b) {
         b.error = (dir / "ROOT").string() + ": " + b.error;
         return;
     }
-    struct stat dirStat;
-    if (::stat(dir.c_str(), &dirStat) == 0) b.mtime = dirStat.st_mtim;
     auto selected = rootmanifest::select(rows, kMountLocale);
     std::ifstream missing(dir / "missing.tsv");
     std::string line;
     std::getline(missing, line);  // header
     while (std::getline(missing, line)) selected.erase(uint32_t(std::stoul(line)));
     b.present = std::move(selected);
+    b.tree = &m.names;
+    b.byFdid = true;
+}
 
-    b.dirUsed.assign(m.names.dirs.size(), false);
-    for (const auto& [fdid, _] : b.present) {
-        uint32_t d = fdid < m.names.dirOf.size() ? m.names.dirOf[fdid] : kNoDir;
+// files.tsv: "path<TAB>ckey" per file, written by `import` without --root.
+void loadPathBuild(const fs::path& dir, const std::string& label, Build& b) {
+    std::ifstream in(dir / "files.tsv");
+    std::map<unsigned, std::string> paths;
+    std::string line;
+    std::getline(in, line);  // header
+    for (unsigned row = 0; std::getline(in, line); row++) {
+        size_t tab = line.rfind('\t');
+        if (tab == std::string::npos || line.size() - tab - 1 != 32) {
+            b.error = (dir / "files.tsv").string() + " row " + std::to_string(row + 2) +
+                      ": expected 'path<TAB>32-hex ckey', got '" + line + "'";
+            return;
+        }
+        store::CKey key;
+        for (size_t i = 0; i < 16; i++) key[i] = uint8_t(std::stoul(line.substr(tab + 1 + 2 * i, 2), nullptr, 16));
+        paths[row] = line.substr(0, tab);
+        b.present[row] = key;
+    }
+    b.ownTree = std::make_unique<NameTree>(buildNameTree(paths, "files.tsv of build " + label));
+    b.tree = b.ownTree.get();
+}
+
+void loadBuild(Mount& m, const std::string& label, Build& b) {
+    fs::path dir = m.st.buildDir(label);
+    struct stat dirStat;
+    if (::stat(dir.c_str(), &dirStat) == 0) b.mtime = dirStat.st_mtim;
+    if (fs::exists(dir / "ROOT")) loadRootBuild(m, dir, b);
+    else if (fs::exists(dir / "files.tsv")) loadPathBuild(dir, label, b);
+    else b.error = dir.string() + " has neither ROOT nor files.tsv";
+    if (!b.error.empty()) return;
+
+    const NameTree& t = *b.tree;
+    b.dirUsed.assign(t.dirs.size(), false);
+    for (const auto& [id, _] : b.present) {
+        uint32_t d = id < t.dirOf.size() ? t.dirOf[id] : kNoDir;
         if (d == kNoDir) {
-            b.unresolved.push_back(fdid);
+            b.unresolved.push_back(id);
             continue;
         }
-        for (; d != kNoDir && !b.dirUsed[d]; d = m.names.dirs[d].parent) b.dirUsed[d] = true;
+        for (; d != kNoDir && !b.dirUsed[d]; d = t.dirs[d].parent) b.dirUsed[d] = true;
     }
     std::sort(b.unresolved.begin(), b.unresolved.end());
     std::fprintf(stderr, "loaded build %s: %zu files (%zu unnamed by %s)\n", label.c_str(), b.present.size(),
-                 b.unresolved.size(), m.names.source.c_str());
+                 b.unresolved.size(), t.source.c_str());
 }
 
 // Returns nullptr if `label` isn't a stored build, or it failed to load (logged).
@@ -255,10 +293,11 @@ Node realNode(fs::path real) {
 Node resolveInBuild(Mount& m, const std::string& label, Build& b, const std::vector<std::string>& rest) {
     if (rest.empty()) return dirNode(Node::TreeDir, &b, 0);
     const std::string& first = rest[0];
-    if (rest.size() == 1 && first == ".listfile") return textNode(Node::Text, m.names.source + "\n");
-    if (rest.size() == 1 && first == ".missing") return realNode(m.st.buildDir(label) / "missing.tsv");
+    const NameTree& t = *b.tree;
+    if (rest.size() == 1 && first == ".listfile") return textNode(Node::Text, t.source + "\n");
+    if (rest.size() == 1 && first == ".missing" && b.byFdid) return realNode(m.st.buildDir(label) / "missing.tsv");
 
-    if (first == "_by_fdid" || first == "_unresolved") {
+    if ((first == "_by_fdid" && b.byFdid) || (first == "_unresolved" && !b.unresolved.empty())) {
         bool unresolvedOnly = first == "_unresolved";
         if (rest.size() == 1) return dirNode(unresolvedOnly ? Node::Unresolved : Node::ByFdid, &b);
         if (!unresolvedOnly && rest.size() == 2 && rest[1] == kByFdidReadmeName) return textNode(Node::Text, kByFdidReadme);
@@ -266,18 +305,18 @@ Node resolveInBuild(Mount& m, const std::string& label, Build& b, const std::vec
         if (rest.size() != 2 || !parseFdid(rest[1], &fdid)) return {};
         auto it = b.present.find(fdid);
         if (it == b.present.end()) return {};
-        bool named = fdid < m.names.dirOf.size() && m.names.dirOf[fdid] != kNoDir;
+        bool named = fdid < t.dirOf.size() && t.dirOf[fdid] != kNoDir;
         if (unresolvedOnly && named) return {};
         return objectNode(it->second);
     }
 
     uint32_t dir = 0;
     for (size_t i = 0; i + 1 < rest.size(); i++) {
-        const NameTree::Entry* e = m.names.find(dir, rest[i]);
+        const NameTree::Entry* e = t.find(dir, rest[i]);
         if (!e || !e->isDir || !b.dirUsed[e->id]) return {};
         dir = e->id;
     }
-    const NameTree::Entry* leaf = m.names.find(dir, rest.back());
+    const NameTree::Entry* leaf = t.find(dir, rest.back());
     if (!leaf) return {};
     if (leaf->isDir) return b.dirUsed[leaf->id] ? dirNode(Node::TreeDir, &b, leaf->id) : Node{};
     auto it = b.present.find(leaf->id);
@@ -369,12 +408,12 @@ int fsReaddir(const char* path, void* buf, fuse_fill_dir_t fill, off_t, struct f
             break;
         case Node::TreeDir:
             if (n.dir == 0) {
-                add("_by_fdid");
                 add(".listfile");
-                add(".missing");
+                if (n.build->byFdid) add("_by_fdid");
+                if (n.build->byFdid) add(".missing");
                 if (!n.build->unresolved.empty()) add("_unresolved");
             }
-            for (const auto& e : m.names.dirs[n.dir].entries)
+            for (const auto& e : n.build->tree->dirs[n.dir].entries)
                 if (e.isDir ? n.build->dirUsed[e.id] : n.build->present.count(e.id) > 0) add(e.name);
             break;
     }

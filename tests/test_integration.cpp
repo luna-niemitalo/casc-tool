@@ -704,3 +704,67 @@ TEST_CASE("extracting the same file by path and by FileDataID produces byte-iden
 }
 
 }  // TEST_SUITE("integration: open-by-path vs open-by-FileDataID")
+
+TEST_SUITE("integration: import (no storage needed)") {
+
+namespace {
+
+void writeFile(const std::filesystem::path& p, const std::string& content) {
+    std::filesystem::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary) << content;
+}
+
+// md5("abc") and md5("hello"), RFC 1321 / well-known vectors.
+const char* kAbc = "900150983cd24fb0d6963f7d28e17f72";
+const char* kHello = "5d41402abc4b2a76b9719d911017c592";
+
+std::filesystem::path objectOf(const std::string& store, const std::string& hex) {
+    return std::filesystem::path(store) / "objects" / hex.substr(0, 2) / hex.substr(2, 2) / hex;
+}
+
+}  // namespace
+
+TEST_CASE("a path import records every file, stores each content once, and empties the tree with --move --drop-duplicates") {
+    TempDir dir;
+    std::string store = dir.string() + "/store", tree = dir.string() + "/store/legacy";
+    writeFile(tree + "/a/x.txt", "abc");
+    writeFile(tree + "/b/y.txt", "abc");  // same content, different path
+    writeFile(tree + "/c/z.txt", "hello");
+
+    auto r = runCasc({"import", store, tree, "--label", "legacy-test", "--tag", "legacy", "--move", "--drop-duplicates"});
+    CHECK_MESSAGE(r.exitCode == 0, r.err);
+    CHECK(std::filesystem::exists(objectOf(store, kAbc)));
+    CHECK(std::filesystem::exists(objectOf(store, kHello)));
+
+    auto files = readWholeFile(store + "/builds/legacy-test/files.tsv");
+    std::string tsv(files.begin(), files.end());
+    CHECK(tsv == std::string("path\tckey\na/x.txt\t") + kAbc + "\nb/y.txt\t" + kAbc + "\nc/z.txt\t" + kHello + "\n");
+
+    std::vector<std::string> left;
+    for (const auto& e : std::filesystem::recursive_directory_iterator(tree))
+        if (e.is_regular_file()) left.push_back(e.path().string());
+    CHECK(left.empty());
+    auto tag = readWholeFile(store + "/tags/legacy");
+    CHECK(std::string(tag.begin(), tag.end()) == "legacy-test\n");
+}
+
+TEST_CASE("an import dry run classifies but changes nothing") {
+    TempDir dir;
+    std::string store = dir.string() + "/store", tree = dir.string() + "/tree";
+    writeFile(tree + "/x.txt", "abc");
+    auto r = runCasc({"import", store, tree, "--label", "dry", "--move", "--drop-duplicates", "--dry-run"});
+    CHECK_MESSAGE(r.exitCode == 0, r.err);
+    CHECK(r.err.find("would import") != std::string::npos);
+    CHECK(std::filesystem::exists(tree + "/x.txt"));
+    CHECK_FALSE(std::filesystem::exists(store + "/objects"));
+    CHECK_FALSE(std::filesystem::exists(store + "/builds/dry"));
+}
+
+TEST_CASE("import refuses a tree that contains the store") {
+    TempDir dir;
+    auto r = runCasc({"import", dir.string() + "/store", dir.string(), "--label", "x"});
+    CHECK(r.exitCode != 0);
+    CHECK(r.err.find("contains the store") != std::string::npos);
+}
+
+}  // TEST_SUITE("integration: import (no storage needed)")
