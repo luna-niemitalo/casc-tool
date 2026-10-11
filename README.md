@@ -230,6 +230,14 @@ for a command's exact options. Summary of what each is for:
   for `/media/luna/data/wow_export` (`--dry-run` first). `--tag` defaults
   to `live` for `wow`. See DESIGN.md for the layout.
 
+- **`import <store-dir> <tree> --label <name>`** — ingest an export tree that
+  isn't the installed build. With `--root <file>` (the tree's own ROOT),
+  files whose content that ROOT lists become that build; without it, every
+  file is recorded at the path it had, as a build of unknown version
+  (`files.tsv`). Identical content is stored once either way; `--move` and
+  `--drop-duplicates` convert the tree in place (only hash-verified files
+  are moved or deleted). `--dry-run` classifies without touching anything.
+
 - **`mount <store-dir> <mountpoint>`** — browse every stored build as a
   read-only filesystem: `<mnt>/live/<listfile path>`,
   `<mnt>/builds/<label>/…`, `_by_fdid/<id>`, `.missing`. Needs no root

@@ -7,6 +7,24 @@ nothing here is actionable. Newest first.
 
 ---
 
+## 2026-10-11 — `import`, path builds, and the store going live
+
+`import` ingests export trees that aren't the installed build: against
+their own ROOT (a normal build) or as a *path build* (`files.tsv`, every
+file at the path it had) for content no known build lists. `mount` serves
+both. The store went live at `/media/luna/data/wow_storage` (converted in
+place from `wow_export`), mounted at `/media/luna/wow_export`. `mount`'s
+`_by_fdid` became lookup-only: listing its ~1.9M entries took ~18 s per
+readdir and stalled Dolphin.
+
+Builds of the older exports were pinned by matching each ROOT's MD5 to
+public build configs: `wow_export_old` is 12.0.7.68887 (crash logs had
+suggested 68453), `wow_export` before its update was 12.1.0.69404. Of the
+first conversion's 384,876 leftover files, 361,493 turned out to be
+byte-identical copies of stored content under other names.
+
+---
+
 ## 2026-10-10 — Build history store: `snapshot` and `mount`
 
 First slice of DESIGN.md. `snapshot` records the installed build as its

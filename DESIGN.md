@@ -1,22 +1,27 @@
 # casc-tool — build history store
 
-## Status (2026-10-10)
+## Status (2026-10-11)
 
 **Built:** the store layout (`src/store.cpp`: objects, builds, `tags/`),
 the MFST v2 parser + enUS selection (`src/rootmanifest.cpp`, selection
 spot-checked equal to CascLib's on FDIDs with several CKeys), `snapshot`
-(including `--seed-from`, content-matched, which covers importing *the
-current build* from an existing export; `--seed-move` converts one in
-place), `mount` (read-only FUSE, verified byte-exact against the export on
-3,000 files), and `scripts/convert-export-to-store.nu` (rehearsed on a
-scratch copy, not yet run on the real export). Planned layout:
-`/media/luna/data/wow_storage` (store, old tree under `legacy/`) mounted at
-`/media/luna/wow_export`.
+(including `--seed-from`, content-matched; `--seed-move` converts an export
+in place), `import` (ROOT builds from an export's own ROOT, and *path
+builds* -- `files.tsv`, for content of no known build), and `mount`
+(read-only FUSE over both build kinds).
 
-**Not built yet:** `import-export` (needed for builds no longer installed,
-i.e. `wow_export_old`), `builds`, `changes`, `history`, `get`, `view`,
-`prune`, and storing listfile snapshots in the store: `mount` takes a
-`--listfile` path directly, and `.listfile` reports that path.
+**Live:** `/media/luna/data/wow_storage`, mounted at `/media/luna/wow_export`.
+Converted from `wow_export` 2026-10-11 (`scripts/convert-export-to-store.nu`);
+older trees being ingested by `scripts/ingest-old-exports.nu` (log in
+`<store>/logs/`): 12.0.7.68887 (`old`), 12.1.0.69404, and the leftovers as
+path builds `legacy-wow_export` (`legacy`) / `legacy-wow_export_old`
+(`legacy-old`). Old builds were identified by matching each ROOT's MD5 to
+the `root =` of public build configs (wago.tools list, Blizzard CDN) --
+crash-log dates alone had pointed at the wrong 12.0.7 build.
+
+**Not built yet:** `builds`, `changes`, `history`, `get`, `view`, `prune`,
+and storing listfile snapshots in the store: `mount` takes a `--listfile`
+path directly, and `.listfile` reports that path.
 
 Everything below marked as a command or layout element is target unless
 listed as built here.
@@ -62,10 +67,15 @@ build B is `manifest[B][fdid] → objects/<ckey>`.
     ROOT            raw root manifest bytes (the authoritative record)
     manifest.tsv    derived from ROOT: fdid  locale  content_flags  ckey   (sorted)
     missing.tsv     fdid  ckey  reason      enUS FDIDs with no object: not-fetched,
-                                            encrypted:<KEYNAME>, unreadable:<code>
-    meta.json       label, product, locale, counts, snapshot time
-  tags/<name>                                       one line: the label (live, ptr, beta)
+                                            encrypted:<KEYNAME>, unreadable:<code>,
+                                            not-in-export (import)
+    meta.json       label, kind/product, source, locale, counts, time
+  builds/<label>/   (path build: content of no known build, from `import` without --root)
+    files.tsv       path  ckey               every file of the tree, at the path it had
+    meta.json
+  tags/<name>                                       one line: the label (live, ptr, beta, old, legacy…)
   tmp/                                              object staging; safe to empty when idle
+  logs/                                             output of long ingest runs
   listfiles/<md5>.csv                              (target) listfile snapshots by content hash
   views/<label>/…                                  (target) browsable tree, disposable
 ```
