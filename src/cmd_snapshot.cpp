@@ -108,6 +108,28 @@ std::set<uint32_t> fdidsMatching(HANDLE hStorage, const std::string& mask, const
     return out;
 }
 
+// Reads a whole open file in chunks; *clean is how many bytes came through
+// before any failure -- for an encrypted file, a lower bound on what's readable
+// (CascLib's signal is only "this read hit an encrypted block").
+DWORD readAll(HANDLE hFile, ULONGLONG size, std::vector<uint8_t>& out, size_t* clean) {
+    constexpr DWORD kChunk = 1 << 20;
+    out.assign(size, 0);
+    *clean = 0;
+    while (*clean < size) {
+        DWORD want = DWORD(std::min<ULONGLONG>(kChunk, size - *clean)), got = 0;
+        if (!CascReadFile(hFile, out.data() + *clean, want, &got)) return GetCascError();
+        if (got == 0) return ERROR_HANDLE_EOF;
+        *clean += got;
+    }
+    return ERROR_SUCCESS;
+}
+
+struct Partial {
+    store::CKey object;  // md5 of the zero-filled bytes actually stored
+    std::string keyName;
+    double unreadAtLeast;
+};
+
 void progress(const char* phase, size_t done, size_t total) {
     std::fprintf(stderr, "\r%s: %zu/%zu", phase, done, total);
     std::fflush(stderr);
@@ -207,6 +229,7 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
                  wanted.size());
 
     std::map<store::CKey, std::string> failures;
+    std::map<store::CKey, Partial> partials;  // by real CKey
     std::mutex failuresMutex;
 
     if (seedFrom && !wanted.empty()) {
@@ -249,23 +272,35 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
         storage::FileHandle hFile;
         std::vector<uint8_t> data;
         std::string e;
-        bool ok = CascOpenFile(hStorage.get(), ckey.data(), 0, CASC_OPEN_BY_CKEY, hFile.out());
         ULONGLONG size = 0;
-        DWORD read = 0;
-        if (ok) ok = CascGetFileSize64(hFile.get(), &size);
-        if (ok) {
-            data.resize(size);
-            ok = CascReadFile(hFile.get(), data.data(), static_cast<DWORD>(size), &read) && read == size;
-        }
-        if (!ok) {
-            DWORD code = GetCascError();
+        size_t clean = 0;
+        DWORD code = ERROR_SUCCESS;
+        bool ok = CascOpenFile(hStorage.get(), ckey.data(), 0, CASC_OPEN_BY_CKEY, hFile.out()) &&
+                  CascGetFileSize64(hFile.get(), &size);
+        if (ok) code = readAll(hFile.get(), size, data, &clean);
+        else code = GetCascError();
+        if (code != ERROR_SUCCESS) {
             ULONGLONG keyName = 0;
-            char buf[48];
+            char key[24] = "";
             if (code == ERROR_FILE_ENCRYPTED && CascGetNotFoundEncryptionKey(hStorage.get(), &keyName))
-                std::snprintf(buf, sizeof(buf), "encrypted:%016llX", static_cast<unsigned long long>(keyName));
-            else
-                std::snprintf(buf, sizeof(buf), "unreadable:%u", code);
-            failures[ckey] = buf;
+                std::snprintf(key, sizeof(key), "%016llX", static_cast<unsigned long long>(keyName));
+            failures[ckey] = code == ERROR_FILE_ENCRYPTED ? std::string("encrypted:") + key
+                                                          : "unreadable:" + std::to_string(code);
+            // Mostly readable with a small encrypted part: keep the zero-filled
+            // file too, as its own object (named by the md5 of what's stored, so
+            // invariant 1 holds), and record it in partial.tsv. Consumers that
+            // parse per section (husk's DB2 reader) use what's there.
+            double unread = size ? 1.0 - double(clean) / double(size) : 1.0;
+            if (code == ERROR_FILE_ENCRYPTED && unread <= storage::kMaxOvercomeEncryptedFraction &&
+                CascSetFileFlags(hFile.get(), CASC_OVERCOME_ENCRYPTED) &&
+                CascSetFilePointer64(hFile.get(), 0, nullptr, FILE_BEGIN) &&
+                readAll(hFile.get(), size, data, &clean) == ERROR_SUCCESS) {
+                store::CKey object = store::md5Bytes(data.data(), data.size());
+                if (st.hasObject(object) || st.putBytes(object, data.data(), data.size(), &e)) {
+                    partials[ckey] = {object, key, unread};
+                    failures[ckey] = std::string("partial:") + key;
+                }
+            }
         } else if (!st.putBytes(ckey, data.data(), data.size(), &e)) {
             failures[ckey] = "rejected:" + e;
         } else {
@@ -292,6 +327,40 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
         missingCount++;
     }
     store::writeTextAtomic(buildDir / "missing.tsv", missingTsv);
+
+    // partial.tsv: zero-filled stand-ins for encrypted files (see the fetch
+    // loop). Rows from earlier runs survive while their real object is still
+    // missing, so a --mask or interrupted run never forgets one.
+    {
+        std::map<uint32_t, std::string> rowsByFdid;
+        std::ifstream prev(buildDir / "partial.tsv");
+        std::string line;
+        std::getline(prev, line);  // header
+        while (std::getline(prev, line)) {
+            auto cells = std::vector<std::string>{};
+            std::stringstream ss(line);
+            for (std::string c; std::getline(ss, c, '\t');) cells.push_back(c);
+            if (cells.size() < 3 || cells[1].size() != 32 || cells[2].size() != 32) continue;
+            store::CKey real, object;
+            for (size_t i = 0; i < 16; i++) {
+                real[i] = uint8_t(std::stoul(cells[1].substr(2 * i, 2), nullptr, 16));
+                object[i] = uint8_t(std::stoul(cells[2].substr(2 * i, 2), nullptr, 16));
+            }
+            if (!st.hasObject(real) && st.hasObject(object)) rowsByFdid[uint32_t(std::stoul(cells[0]))] = line;
+        }
+        for (const auto& [fdid, ckey] : ordered) {
+            auto p = partials.find(ckey);
+            if (p == partials.end()) continue;
+            char frac[16];
+            std::snprintf(frac, sizeof(frac), "%.4f", p->second.unreadAtLeast);
+            rowsByFdid[fdid] = std::to_string(fdid) + "\t" + rootmanifest::hex(ckey) + "\t" +
+                               rootmanifest::hex(p->second.object) + "\t" + p->second.keyName + "\t" + frac;
+        }
+        std::string tsv = "fdid\tckey\tobject\tkey\tunread_at_least\n";
+        for (const auto& [fdid, row] : rowsByFdid) tsv += row + "\n";
+        store::writeTextAtomic(buildDir / "partial.tsv", tsv);
+        std::fprintf(stderr, "%zu FDIDs served zero-filled (partial.tsv)\n", rowsByFdid.size());
+    }
 
     std::string meta = "{\n  \"label\": \"" + label + "\",\n  \"product\": \"" + product +
                        "\",\n  \"locale\": \"enUS\",\n  \"fdids\": " + std::to_string(selected.size()) +

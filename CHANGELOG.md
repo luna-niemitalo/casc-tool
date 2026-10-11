@@ -23,6 +23,14 @@ suggested 68453), `wow_export` before its update was 12.1.0.69404. Of the
 first conversion's 384,876 leftover files, 361,493 turned out to be
 byte-identical copies of stored content under other names.
 
+Regression found by husk, fixed the same day: 79 DB2s with small encrypted
+sections (creaturedisplayinfo, item, itemappearance, ...) vanished from
+the mount, because snapshot only stored exact CKey matches while the old
+export had kept zero-filled copies. Snapshot now stores those as
+`partial.tsv` stand-ins (object named by its own md5; invariant 1 holds)
+and mount serves them at their normal paths. The stand-ins are
+byte-identical to what `extract` had written into wow_export.
+
 ---
 
 ## 2026-10-10 — Build history store: `snapshot` and `mount`

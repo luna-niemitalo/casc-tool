@@ -241,12 +241,6 @@ bool openFile(HANDLE hStorage, const std::string& idOrPath, const std::string& l
 
 namespace {
 
-// Not a flag: nothing about this value varies per invocation the way
-// --strict-encrypted's on/off decision does. Chosen as a starting point
-// (mostly-legitimate files with one small encrypted tail, like the real
-// DB2 case this was built for, land well under it; a file that's mostly
-// ciphertext isn't meaningfully "recovered" by zero-filling the rest of it).
-constexpr double kMaxOvercomeEncryptedFraction = 0.30;
 
 // Streams hFile from its *current* read position into an already-open
 // FILE*, chunk at a time, until EOF or a read failure. Returns the raw

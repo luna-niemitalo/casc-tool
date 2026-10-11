@@ -16,6 +16,14 @@
 // actual open-with-options call.
 namespace storage {
 
+// Largest share of a file that may be zero-filled (encrypted, key missing)
+// and still be written as a partially recovered file -- by extract (see
+// copyToFile) and by snapshot (partial.tsv). Not a flag: nothing about it
+// varies per invocation. Mostly-legitimate files with a small encrypted
+// tail, like the DB2s this was built for, land well under it; a file that's
+// mostly ciphertext isn't meaningfully "recovered" by zero-filling it.
+constexpr double kMaxOvercomeEncryptedFraction = 0.30;
+
 // Closes a CascLib HANDLE automatically. CascLib has three handle kinds
 // (storage/file/find) with three different close functions; this is
 // templated on which one to call so callers never have to remember.

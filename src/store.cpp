@@ -179,6 +179,15 @@ bool writeTextAtomic(const fs::path& path, const std::string& text) {
     return !ec;
 }
 
+CKey md5Bytes(const uint8_t* data, size_t size) {
+    MD5_CTX ctx;
+    MD5_Init(&ctx);
+    MD5_Update(&ctx, data, static_cast<unsigned long>(size));
+    CKey out;
+    MD5_Final(out.data(), &ctx);
+    return out;
+}
+
 std::optional<CKey> md5File(const fs::path& path, std::string* error) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {

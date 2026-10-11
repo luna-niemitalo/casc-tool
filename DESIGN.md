@@ -68,7 +68,10 @@ build B is `manifest[B][fdid] → objects/<ckey>`.
     manifest.tsv    derived from ROOT: fdid  locale  content_flags  ckey   (sorted)
     missing.tsv     fdid  ckey  reason      enUS FDIDs with no object: not-fetched,
                                             encrypted:<KEYNAME>, unreadable:<code>,
-                                            not-in-export (import)
+                                            not-in-export (import), partial:<KEYNAME>
+    partial.tsv     fdid  ckey  object  key  unread_at_least
+                                            zero-filled stand-ins for partly encrypted
+                                            files; object = md5 of the stored bytes
     meta.json       label, kind/product, source, locale, counts, time
   builds/<label>/   (path build: content of no known build, from `import` without --root)
     files.tsv       path  ckey               every file of the tree, at the path it had
@@ -90,9 +93,12 @@ uncompressed (3.2 M rows incl. locale variants).
    objects are written to a temp name, hashed, and renamed into place only
    on match. `--seed-move` hashes the file where it lies and then renames
    it, which holds only while nothing else writes the seed tree (true for
-   an export being converted). Snapshot never uses the zero-fill fallback
-   (README, "partial-encryption fallback"): an unreadable file goes to
-   `missing.tsv` as `encrypted:<KEYNAME>` instead.
+   an export being converted). A partly encrypted file is never stored
+   under its CKey: under the 30% cutoff (README, "partial-encryption
+   fallback") its zero-filled bytes become an object under *their own*
+   md5, listed in `partial.tsv` and served at the normal path by `mount`
+   (husk parses such DB2s per section); the real CKey stays in
+   `missing.tsv` as `partial:<KEYNAME>` until the key arrives.
 2. **Objects are immutable and never deleted implicitly.** The store is
    append-only; removal only via an explicit `prune` (drop builds, then
    delete objects no remaining manifest references).

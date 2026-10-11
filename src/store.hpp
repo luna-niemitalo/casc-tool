@@ -22,6 +22,7 @@ using CKey = rootmanifest::CKey;
 
 // md5 of a file's contents; nullopt (with *error) if it can't be read.
 std::optional<CKey> md5File(const std::filesystem::path& path, std::string* error);
+CKey md5Bytes(const uint8_t* data, size_t size);
 
 // Writes via a .tmp sibling + rename, so a mount or a reader never sees a
 // half-written manifest/meta file. False if the write failed.

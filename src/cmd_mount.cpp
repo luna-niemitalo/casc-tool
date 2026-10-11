@@ -155,6 +155,18 @@ void loadRootBuild(Mount& m, const fs::path& dir, Build& b) {
     std::string line;
     std::getline(missing, line);  // header
     while (std::getline(missing, line)) selected.erase(uint32_t(std::stoul(line)));
+    // Zero-filled stand-ins for partly encrypted files (snapshot's partial.tsv:
+    // fdid, real ckey, stored object, ...). Served at the normal path, listed in
+    // .partial, the way the old export trees carried them.
+    std::ifstream partial(dir / "partial.tsv");
+    std::getline(partial, line);  // header
+    while (std::getline(partial, line)) {
+        size_t a = line.find('\t'), b2 = line.find('\t', a + 1), c = line.find('\t', b2 + 1);
+        if (a == std::string::npos || b2 == std::string::npos || c - b2 - 1 != 32) continue;
+        store::CKey object;
+        for (size_t i = 0; i < 16; i++) object[i] = uint8_t(std::stoul(line.substr(b2 + 1 + 2 * i, 2), nullptr, 16));
+        selected[uint32_t(std::stoul(line.substr(0, a)))] = object;
+    }
     b.present = std::move(selected);
     b.tree = &m.names;
     b.byFdid = true;
@@ -296,6 +308,7 @@ Node resolveInBuild(Mount& m, const std::string& label, Build& b, const std::vec
     const NameTree& t = *b.tree;
     if (rest.size() == 1 && first == ".listfile") return textNode(Node::Text, t.source + "\n");
     if (rest.size() == 1 && first == ".missing" && b.byFdid) return realNode(m.st.buildDir(label) / "missing.tsv");
+    if (rest.size() == 1 && first == ".partial" && b.byFdid) return realNode(m.st.buildDir(label) / "partial.tsv");
 
     if ((first == "_by_fdid" && b.byFdid) || (first == "_unresolved" && !b.unresolved.empty())) {
         bool unresolvedOnly = first == "_unresolved";
@@ -411,6 +424,7 @@ int fsReaddir(const char* path, void* buf, fuse_fill_dir_t fill, off_t, struct f
                 add(".listfile");
                 if (n.build->byFdid) add("_by_fdid");
                 if (n.build->byFdid) add(".missing");
+                if (n.build->byFdid) add(".partial");
                 if (!n.build->unresolved.empty()) add("_unresolved");
             }
             for (const auto& e : n.build->tree->dirs[n.dir].entries)
