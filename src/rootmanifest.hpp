@@ -33,6 +33,19 @@ std::vector<Row> parse(const std::vector<uint8_t>& root, std::string* error);
 // FDID wins. Mirrored so the store serves the same bytes `extract` would.
 std::unordered_map<uint32_t, CKey> select(const std::vector<Row>& rows, uint32_t localeMask);
 
+enum class Change : char { Added = '+', Removed = '-', Changed = '~', Unchanged = '=' };
+
+struct Diff {
+    uint32_t fdid;
+    Change change;
+    CKey a, b;  // CKey in the older/newer selection; zeroed on the side the FDID is absent
+};
+
+// Every FDID of either selection (select() output), by FDID: a merge of the
+// two builds' FDID -> CKey maps. Content identity is CKey identity.
+std::vector<Diff> compare(const std::unordered_map<uint32_t, CKey>& older,
+                          const std::unordered_map<uint32_t, CKey>& newer);
+
 std::string hex(const CKey& key);
 
 // manifest.tsv: every row, sorted by FDID (ROOT order kept within one FDID).

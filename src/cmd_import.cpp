@@ -35,6 +35,9 @@ std::vector<cli::OptionSpec> specs() {
          "The tree's own ROOT manifest: import as that build, adopting files whose content it lists. "
          "Without --root the tree is a path build: every file is recorded under its own path"},
         {"--tag", true, "<name>", "Point this tag at the imported build (e.g. old, legacy)"},
+        {"--product", true, "<codename>",
+         "The product the tree was exported from (wow, wowf, ...), recorded in meta.json so `changes` and "
+         "`builds` place it in that product's history"},
         {"--move", false, "",
          "Move adopted files into the store instead of cloning them (tree must be on the store's filesystem)"},
         {"--drop-duplicates", false, "",
@@ -208,7 +211,9 @@ int runImport(const std::vector<std::string>& rawArgs) {
             for (const auto& [path, key] : entries) tsv += path + "\t" + rootmanifest::hex(key) + "\n";
             store::writeTextAtomic(buildDir / "files.tsv", tsv);
         }
+        auto product = args.option("--product");
         std::string meta = "{\n  \"label\": \"" + label + "\",\n  \"kind\": \"" + (rootFile ? "root" : "paths") +
+                           (product ? "\",\n  \"product\": \"" + *product : std::string()) +
                            "\",\n  \"source\": \"import:" + fs::absolute(tree).string() +
                            "\",\n  \"locale\": \"enUS\",\n  \"missing\": " + std::to_string(missingCount) +
                            ",\n  \"imported_at\": \"" + nowIso() + "\"\n}\n";

@@ -1,27 +1,49 @@
 # casc-tool — build history store
 
-## Status (2026-10-11)
+## Status (2026-11-09)
 
 **Built:** the store layout (`src/store.cpp`: objects, builds, `tags/`),
 the MFST v2 parser + enUS selection (`src/rootmanifest.cpp`, selection
 spot-checked equal to CascLib's on FDIDs with several CKeys), `snapshot`
-(including `--seed-from`, content-matched; `--seed-move` converts an export
-in place), `import` (ROOT builds from an export's own ROOT, and *path
-builds* -- `files.tsv`, for content of no known build), and `mount`
-(read-only FUSE over both build kinds).
+(every active product of the install by default; `--seed-from`,
+content-matched; `--seed-move` converts an export in place), `import` (ROOT
+builds from an export's own ROOT, and *path builds* -- `files.tsv`, for
+content of no known build), `mount` (read-only FUSE over both build
+kinds), `builds` (per-product listing) and `changes` (per-FDID diff of two
+builds, defaulting to the previous build of the same product).
 
-**Live:** `/media/luna/data/wow_storage`, mounted at `/media/luna/wow_export`.
-Converted from `wow_export` 2026-10-11 (`scripts/convert-export-to-store.nu`);
-older trees being ingested by `scripts/ingest-old-exports.nu` (log in
-`<store>/logs/`): 12.0.7.68887 (`old`), 12.1.0.69404, and the leftovers as
-path builds `legacy-wow_export` (`legacy`) / `legacy-wow_export_old`
-(`legacy-old`). Old builds were identified by matching each ROOT's MD5 to
-the `root =` of public build configs (wago.tools list, Blizzard CDN) --
-crash-log dates alone had pointed at the wrong 12.0.7 build.
+**Live:** `/media/luna/work/wow_storage` (moved from
+`/media/luna/data/wow_storage` by `scripts/migrate-store.nu`), mounted at
+`/media/luna/wow_export`. Holds `wow` builds 12.0.7.68887 (`old`) through
+12.1.5.70783 (`live`), the path builds `legacy-wow_export` (`legacy`) /
+`legacy-wow_export_old` (`legacy-old`), and from 2026-11-09 `wowf`
+(`_forever_`, tag `forever`). Old builds were identified by matching each
+ROOT's MD5 to the `root =` of public build configs (wago.tools list,
+Blizzard CDN) -- crash-log dates alone had pointed at the wrong 12.0.7
+build.
 
-**Not built yet:** `builds`, `changes`, `history`, `get`, `view`, `prune`,
-and storing listfile snapshots in the store: `mount` takes a `--listfile`
-path directly, and `.listfile` reports that path.
+**Not built yet:** `history`, `get`, `view`, `prune`, `builds`' "bytes
+unique to each", and storing listfile snapshots in the store: `mount` and
+`changes` take a `--listfile` path directly, and `.listfile` reports that
+path.
+
+## Products
+
+One install can carry several products over one shared `Data/` storage:
+on fox_nest, `wow` (`_retail_`, 12.x) and `wowf` (`_forever_`, 1.60.x;
+measured 2026-11-09: 1.04 M distinct enUS CKeys, 79% already stored from
+`wow`). Each product is its own **history** -- its builds succeed each
+other, and only each other -- while **content is product-agnostic**: an
+object is a CKey, and both products reference the same object for the
+same bytes.
+
+So the product is a property of a *build* (`meta.json` `"product"`), never
+of an object or of the store layout. Builds stay flat under
+`builds/<version>/` (decided 2026-11-09: no `builds/<product>/` level, so
+existing labels, scripts and mount paths stay valid). The two products'
+version spaces don't overlap today (12.x vs 1.60.x); if they ever did,
+`recordRoot` refuses a second ROOT under an existing label, so a collision
+fails loudly and needs an explicit `--label`.
 
 Everything below marked as a command or layout element is target unless
 listed as built here.
@@ -72,11 +94,13 @@ build B is `manifest[B][fdid] → objects/<ckey>`.
     partial.tsv     fdid  ckey  object  key  unread_at_least
                                             zero-filled stand-ins for partly encrypted
                                             files; object = md5 of the stored bytes
-    meta.json       label, kind/product, source, locale, counts, time
+    meta.json       label, product (wow, wowf, ...), kind (import) / source,
+                    locale, counts, time. Records before 2026-11-09 had no
+                    product; the live store's were backfilled to "wow"
   builds/<label>/   (path build: content of no known build, from `import` without --root)
     files.tsv       path  ckey               every file of the tree, at the path it had
     meta.json
-  tags/<name>                                       one line: the label (live, ptr, beta, old, legacy…)
+  tags/<name>                                       one line: the label (live, forever, ptr, beta, old, legacy…)
   tmp/                                              object staging; safe to empty when idle
   logs/                                             output of long ingest runs
   listfiles/<md5>.csv                              (target) listfile snapshots by content hash
@@ -106,7 +130,10 @@ uncompressed (3.2 M rows incl. locale variants).
    one MFST parser used by both ingestion paths. Names never enter a manifest.
 4. **Views are derived and disposable.** Rebuildable from manifest + objects
    at any time; never the only copy of anything.
-5. **casc-tool writes only under `--store`** (and view/output dirs it is
+5. **A build belongs to exactly one product; an object belongs to none.**
+   History (`changes`' default predecessor, tags) follows one product;
+   storage and dedup never look at products.
+6. **casc-tool writes only under `--store`** (and view/output dirs it is
    given). It never writes into a game install or into an existing export.
 
 ## Ingestion
@@ -138,8 +165,8 @@ listfile):
 
 | command | answers |
 |---|---|
-| `builds` | which builds are stored, row/object/missing counts, bytes unique to each |
-| `changes <A> <B> [mask]` | added / removed / changed / unchanged per FDID (`--status` filter; unchanged hidden by default, counted always) |
+| `builds` | which builds are stored, per product, with FDID/missing/partial counts (built); bytes unique to each (target) |
+| `changes [<A>] <B> [--mask]` | added / removed / changed / unchanged per FDID (`--status` filter; unchanged hidden by default, counted always). No `<A>`: B's predecessor in its own product. Cross-product pairs need `--cross-product` (built) |
 | `history <id-or-path>` | the CKey of one file across every stored build, transitions marked |
 | `get <id-or-path> --build <B> [out]` | one file at one build, from the store |
 | `mount <mountpoint>` | browse every stored build by path (see Browsing) |
@@ -170,8 +197,9 @@ Two ways to get a tree, same layout:
 - **`mount` (primary): read-only FUSE filesystem.** Layout:
   ```
   <mnt>/live -> builds/12.1.0.69933          one tag per product: live (wow),
-  <mnt>/ptr  -> builds/…                     ptr (wowt), beta (wow_beta) --
-                                              never "latest", which would be ptr
+  <mnt>/forever -> builds/1.60.1.70790       forever (wowf), ptr (wowt), beta
+  <mnt>/ptr  -> builds/…                     (wow_beta) -- never "latest",
+                                              which would mix products
   <mnt>/builds/<label>/<listfile path>       e.g. world/wmo/…/x.wmo
   <mnt>/builds/<label>/_by_fdid/<fdid>
   <mnt>/builds/<label>/_unresolved/<fdid>

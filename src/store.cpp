@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -146,8 +147,68 @@ std::vector<std::string> Store::builds() const {
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(root_ / "builds", ec))
         if (entry.is_directory()) out.push_back(entry.path().filename().string());
-    std::sort(out.begin(), out.end());
+    std::sort(out.begin(), out.end(), labelLess);
     return out;
+}
+
+std::optional<std::string> Store::resolve(const std::string& name) const {
+    std::error_code ec;
+    if (!name.empty() && name[0] != '.' && fs::is_directory(buildDir(name), ec)) return name;
+    auto t = tags();
+    auto it = t.find(name);
+    if (it == t.end()) return std::nullopt;
+    return it->second;
+}
+
+std::map<std::string, std::string> Store::meta(const std::string& label) const {
+    std::map<std::string, std::string> out;
+    std::ifstream in(buildDir(label) / "meta.json");
+    for (std::string line; std::getline(in, line);) {
+        size_t k0 = line.find('"'), k1 = line.find('"', k0 + 1), colon = line.find(':', k1);
+        if (k0 == std::string::npos || k1 == std::string::npos || colon == std::string::npos) continue;
+        std::string value = line.substr(colon + 1);
+        while (!value.empty() && (value.back() == ',' || value.back() == ' ')) value.pop_back();
+        while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
+        out[line.substr(k0 + 1, k1 - k0 - 1)] = value;
+    }
+    return out;
+}
+
+std::vector<rootmanifest::Row> Store::readRoot(const std::string& label, std::string* error) const {
+    fs::path path = buildDir(label) / "ROOT";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        *error = "build " + label + " has no ROOT (" + path.string() + "): a path build, or not stored";
+        return {};
+    }
+    std::vector<uint8_t> root{std::istreambuf_iterator<char>(in), {}};
+    auto rows = rootmanifest::parse(root, error);
+    if (!error->empty()) *error = path.string() + ": " + *error;
+    return rows;
+}
+
+bool labelLess(const std::string& a, const std::string& b) {
+    size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        bool da = std::isdigit(static_cast<unsigned char>(a[i])), db = std::isdigit(static_cast<unsigned char>(b[j]));
+        if (!da || !db) {
+            if (a[i] != b[j]) return a[i] < b[j];
+            i++, j++;
+            continue;
+        }
+        size_t ei = i, ej = j;
+        while (ei < a.size() && std::isdigit(static_cast<unsigned char>(a[ei]))) ei++;
+        while (ej < b.size() && std::isdigit(static_cast<unsigned char>(b[ej]))) ej++;
+        // Compare by value without overflow: strip leading zeros, then length, then digits.
+        std::string na = a.substr(i, ei - i), nb = b.substr(j, ej - j);
+        na.erase(0, std::min(na.find_first_not_of('0'), na.size() - 1));
+        nb.erase(0, std::min(nb.find_first_not_of('0'), nb.size() - 1));
+        if (na.size() != nb.size()) return na.size() < nb.size();
+        if (na != nb) return na < nb;
+        i = ei, j = ej;
+    }
+    return a.size() - i < b.size() - j;
 }
 
 std::map<std::string, std::string> Store::tags() const {

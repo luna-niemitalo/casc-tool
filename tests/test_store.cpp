@@ -1,6 +1,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
+#include <unordered_map>
 
 #include <doctest/doctest.h>
 
@@ -123,6 +125,18 @@ TEST_CASE("select mirrors CascLib: skips low-violence/don't-load and other local
     CHECK(chosen.at(4) == filledKey(0x44));
 }
 
+TEST_CASE("compare classifies every FDID of either side, sorted by FDID") {
+    std::unordered_map<uint32_t, rootmanifest::CKey> older = {{3, filledKey(1)}, {1, filledKey(2)}, {7, filledKey(3)}};
+    std::unordered_map<uint32_t, rootmanifest::CKey> newer = {{1, filledKey(2)}, {3, filledKey(9)}, {5, filledKey(4)}};
+    auto d = rootmanifest::compare(older, newer);
+    REQUIRE(d.size() == 4);
+    using C = rootmanifest::Change;
+    CHECK((d[0].fdid == 1 && d[0].change == C::Unchanged));
+    CHECK((d[1].fdid == 3 && d[1].change == C::Changed && d[1].a == filledKey(1) && d[1].b == filledKey(9)));
+    CHECK((d[2].fdid == 5 && d[2].change == C::Added && d[2].b == filledKey(4)));
+    CHECK((d[3].fdid == 7 && d[3].change == C::Removed && d[3].a == filledKey(3)));
+}
+
 }  // TEST_SUITE
 
 TEST_SUITE("store") {
@@ -189,6 +203,60 @@ TEST_CASE("tags and builds are read back from the layout") {
     st.setTag("live", "12.1.0.69933");
     CHECK(st.builds() == std::vector<std::string>{"12.1.0.68914", "12.1.0.69933"});
     CHECK(st.tags().at("live") == "12.1.0.69933");
+}
+
+TEST_CASE("labelLess orders digit runs numerically, so builds list oldest first") {
+    CHECK(store::labelLess("12.1.5.70783", "12.1.10.1"));
+    CHECK(store::labelLess("1.60.1.70790", "12.0.7.68887"));
+    CHECK_FALSE(store::labelLess("12.1.5.70783", "12.1.5.70783"));
+    CHECK(store::labelLess("12.1.5", "12.1.5.1"));
+    CHECK(store::labelLess("12.1.5.70783", "legacy-wow_export"));
+    TempStore tmp;
+    store::Store st(tmp.path());
+    for (const char* l : {"12.1.10.1", "12.1.5.70783", "1.60.1.70790"}) fs::create_directories(st.buildDir(l));
+    CHECK(st.builds() == std::vector<std::string>{"1.60.1.70790", "12.1.5.70783", "12.1.10.1"});
+}
+
+TEST_CASE("resolve takes a label or a tag, and a label is never shadowed by a tag") {
+    TempStore tmp;
+    store::Store st(tmp.path());
+    fs::create_directories(st.buildDir("1.60.1.70790"));
+    fs::create_directories(st.buildDir("forever"));
+    st.setTag("live", "1.60.1.70790");
+    st.setTag("forever", "1.60.1.70790");
+    CHECK(st.resolve("1.60.1.70790") == std::optional<std::string>("1.60.1.70790"));
+    CHECK(st.resolve("live") == std::optional<std::string>("1.60.1.70790"));
+    CHECK(st.resolve("forever") == std::optional<std::string>("forever"));
+    CHECK_FALSE(st.resolve("ptr"));
+}
+
+TEST_CASE("meta reads the flat meta.json snapshot and import write; absent keys are absent") {
+    TempStore tmp;
+    store::Store st(tmp.path());
+    fs::create_directories(st.buildDir("1.60.1.70790"));
+    std::ofstream(st.buildDir("1.60.1.70790") / "meta.json")
+        << "{\n  \"label\": \"1.60.1.70790\",\n  \"product\": \"wowf\",\n  \"fdids\": 1244644,\n"
+           "  \"snapshot_at\": \"2026-11-09T16:00:00Z\"\n}\n";
+    auto m = st.meta("1.60.1.70790");
+    CHECK(m.at("product") == "wowf");
+    CHECK(m.at("fdids") == "1244644");
+    CHECK(m.at("snapshot_at") == "2026-11-09T16:00:00Z");
+    CHECK(m.count("kind") == 0);
+    CHECK(st.meta("not-stored").empty());
+}
+
+TEST_CASE("readRoot parses a stored ROOT and names a path build's lack of one") {
+    TempStore tmp;
+    store::Store st(tmp.path());
+    std::string error;
+    auto root = makeRoot({{0x2, 0, 0, 0, {{10, 1}}}});
+    REQUIRE(st.recordRoot("12.1.5.70783", root, rootmanifest::parse(root, &error), &error));
+    auto rows = st.readRoot("12.1.5.70783", &error);
+    CHECK(error.empty());
+    CHECK(rows.size() == 1);
+    fs::create_directories(st.buildDir("legacy"));
+    CHECK(st.readRoot("legacy", &error).empty());
+    CHECK(error.find("no ROOT") != std::string::npos);
 }
 
 }  // TEST_SUITE

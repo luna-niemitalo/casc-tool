@@ -1,5 +1,7 @@
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 
 #include <doctest/doctest.h>
 
@@ -130,3 +132,50 @@ TEST_CASE("empty input sanitizes to empty output") {
 }
 
 }  // TEST_SUITE("storage::sanitizeRelativePath")
+
+TEST_SUITE("storage::activeProducts") {
+
+// Header and row shape of a real two-product install (_retail_ + _forever_,
+// 2026-11-09), trimmed to the columns that matter plus one that doesn't.
+const char* kBuildInfo =
+    "Branch!STRING:0|Active!DEC:1|Build Key!HEX:16|Version!STRING:0|Product!STRING:0\n"
+    "eu|1|bc493ecb2898766c0f8947a99b4b3d65|12.1.5.70783|wow\n"
+    "eu|0|00000000000000000000000000000000|12.1.5.70688|wowt\n"
+    "eu|1|9006ba6948388dd0d4a0578e64b8a92e|1.60.1.70790|wowf\n";
+
+struct TempInstall {
+    std::filesystem::path dir = std::filesystem::temp_directory_path() / "casc-tool-test-install";
+    explicit TempInstall(const std::string& buildInfo) {
+        std::filesystem::create_directories(dir);
+        std::ofstream(dir / ".build.info") << buildInfo;
+    }
+    ~TempInstall() { std::filesystem::remove_all(dir); }
+};
+
+TEST_CASE("every Active=1 row, in file order, inactive ones skipped") {
+    TempInstall install(kBuildInfo);
+    std::string error;
+    auto products = storage::activeProducts(install.dir, &error);
+    CHECK(error.empty());
+    REQUIRE(products.size() == 2);
+    CHECK(products[0].product == "wow");
+    CHECK(products[0].version == "12.1.5.70783");
+    CHECK(products[1].product == "wowf");
+    CHECK(products[1].version == "1.60.1.70790");
+}
+
+TEST_CASE("a header without a needed column names the column and shows the header") {
+    TempInstall install("Branch!STRING:0|Active!DEC:1|Version!STRING:0\neu|1|12.1.5.70783\n");
+    std::string error;
+    CHECK(storage::activeProducts(install.dir, &error).empty());
+    CHECK(error.find("'Product'") != std::string::npos);
+    CHECK(error.find("Branch!STRING:0") != std::string::npos);
+}
+
+TEST_CASE("a missing .build.info is an error naming the path") {
+    std::string error;
+    CHECK(storage::activeProducts("/nonexistent-casc-tool-install", &error).empty());
+    CHECK(error.find("/nonexistent-casc-tool-install/.build.info") != std::string::npos);
+}
+
+}  // TEST_SUITE("storage::activeProducts")

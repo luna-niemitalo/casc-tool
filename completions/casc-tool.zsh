@@ -4,6 +4,8 @@
 _casc_tool() {
     local -a subcommands
     subcommands=(
+        'builds:list a store'\''s builds, per product'
+        'changes:list files added/removed/changed between two stored builds'
         'diff:compare two listfile snapshots'
         'extract:extract a single file to disk'
         'extract-batch:bulk-extract matching files to a directory'
@@ -21,6 +23,23 @@ _casc_tool() {
     fi
 
     case ${words[2]} in
+        builds)
+            _arguments \
+                '(-h --help)'{-h,--help}'[print help and exit]' \
+                '--product[Only this product'\''s builds (wow, wowf, ...)]:value:_files' \
+                '--format[Output format. Default: text]:value:(text csv json)' \
+                '*:arg:_files -/'
+            ;;
+        changes)
+            _arguments \
+                '(-h --help)'{-h,--help}'[print help and exit]' \
+                '--status[Comma-separated statuses to list: added, removed, changed, unchanged. Default: added,removed,changed (all four are always counted)]:value:_files' \
+                '--listfile[Name each FDID by this listfile (and allow --mask). Default: FDIDs only]:value:_files' \
+                '--mask[Only FDIDs whose listfile path matches (fnmatch, case-insensitive, '\''*'\'' crosses '\''/'\''); needs --listfile]:value:_files' \
+                '--cross-product[Allow comparing builds of different products (e.g. wow vs wowf): normally refused, since each product is its own history]' \
+                '--format[Output format. Default: text. csv/json include both object paths]:value:(text csv json)' \
+                '*:arg:_files'
+            ;;
         diff)
             _arguments \
                 '(-h --help)'{-h,--help}'[print help and exit]' \
@@ -34,7 +53,7 @@ _casc_tool() {
                 '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
                 '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
-                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'' for _retail_, '\''wowf'\'' for _forever_, '\''wowt'\'' for PTR)]:value:_files' \
                 '--strict-encrypted[Never write a file that'\''s partially encrypted with a missing key, even if only a small fraction of it is affected -- the default instead zero-fills and proceeds under 30%]' \
                 '*:arg:_files'
             ;;
@@ -45,7 +64,7 @@ _casc_tool() {
                 '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
                 '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
-                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'' for _retail_, '\''wowf'\'' for _forever_, '\''wowt'\'' for PTR)]:value:_files' \
                 '--from-list[Extract exactly these FileDataIDs (one decimal ID per line) instead of matching a mask -- one storage open, no glob walk. Replaces <mask>; still takes <out-dir>]:value:_files' \
                 '--unresolved-only[Only extract entries with no name in --listfile (written as <out-dir>/_unresolved/FILE########.dat). Not valid with --from-list -- an explicit ID list is neither resolved nor unresolved, it'\''s just itself]' \
                 '--dry-run[Report what would be extracted (count, total bytes) without writing anything]' \
@@ -58,6 +77,7 @@ _casc_tool() {
                 '--label[Build label (required), e.g. 12.0.7.68453 or legacy-wow_export]:value:_files' \
                 '--root[The tree'\''s own ROOT manifest: import as that build, adopting files whose content it lists. Without --root the tree is a path build: every file is recorded under its own path]:value:_files' \
                 '--tag[Point this tag at the imported build (e.g. old, legacy)]:value:_files' \
+                '--product[The product the tree was exported from (wow, wowf, ...), recorded in meta.json so `changes` and `builds` place it in that product'\''s history]:value:_files' \
                 '--move[Move adopted files into the store instead of cloning them (tree must be on the store'\''s filesystem)]' \
                 '--drop-duplicates[Delete tree files whose content the store already holds (hash-verified, so nothing is lost)]' \
                 '--dry-run[Hash and classify everything, report, change nothing]' \
@@ -70,7 +90,7 @@ _casc_tool() {
                 '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
                 '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
-                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'' for _retail_, '\''wowf'\'' for _forever_, '\''wowt'\'' for PTR)]:value:_files' \
                 '--format[Output format. Default: text]:value:(text json)' \
                 '*:arg:_files'
             ;;
@@ -81,7 +101,7 @@ _casc_tool() {
                 '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
                 '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
-                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'' for _retail_, '\''wowf'\'' for _forever_, '\''wowt'\'' for PTR)]:value:_files' \
                 '--dbcache[Hotfix cache to read. Default: <install>/_retail_/Cache/ADB/enUS/DBCache.bin, where <install> is --storage (or its parent, if --storage is the Data directory)]:value:_files' \
                 '--format[Output format. Default: text (only NEW keys, as '\''NAME KEY'\'' lines -- appendable to a keys file); csv/json list every harvested name with its status]:value:(text csv json)' \
                 '*:arg:_files'
@@ -93,7 +113,7 @@ _casc_tool() {
                 '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
                 '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
-                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'' for _retail_, '\''wowf'\'' for _forever_, '\''wowt'\'' for PTR)]:value:_files' \
                 '--unresolved-only[Only show entries with no name in --listfile (FileDataID-only) -- the actual worklist for growing the community listfile after a patch]' \
                 '--format[Output format. Default: text]:value:(text csv json)' \
                 '--limit[Max rows to print, 0 = unlimited. Default: 100 (applies to every format)]:value:_files' \
@@ -113,10 +133,10 @@ _casc_tool() {
                 '--listfile[FileDataID<->path mapping, e.g. wow-listfile'\''s community-listfile.csv. Default: listfile.csv (current directory)]:value:_files' \
                 '--locale[One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw]:value:_files' \
                 '--keys[Optional TACT decryption keys file (same format as wow.tools'\''s tactkeys API: '\''KeyName KeyValue'\'' hex pairs, one per line)]:value:_files' \
-                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'', '\''wowt'\'' for PTR)]:value:_files' \
-                '--label[Build label. Default: the Version column of .build.info for --product (e.g. 12.1.0.69933)]:value:_files' \
-                '--tag[Point this tag at the build. Default by --product: wow -> live, wowt -> ptr, wow_beta -> beta]:value:_files' \
-                '--seed-from[An existing export tree: every file in it is hashed, and any whose content is a needed CKey is cloned in instead of extracted. Matching is by content, so the tree'\''s naming doesn'\''t matter]:value:_files -/' \
+                '--product[Optional product codename, for installs with more than one flavor (e.g. '\''wow'\'' for _retail_, '\''wowf'\'' for _forever_, '\''wowt'\'' for PTR)]:value:_files' \
+                '--label[Build label. Default: the Version column of .build.info for the product (e.g. 12.1.5.70783). Names one build, so needs --product on a multi-product install]:value:_files' \
+                '--tag[Point this tag at the build. Default by product: wow -> live, wowf -> forever, wowt -> ptr, wow_beta -> beta. Needs --product on a multi-product install]:value:_files' \
+                '--seed-from[An existing export tree: every file in it is hashed, and any whose content is a needed CKey is cloned in instead of extracted. Matching is by content, so the tree'\''s naming doesn'\''t matter. Needs --product on a multi-product install]:value:_files -/' \
                 '--seed-move[With --seed-from on the store'\''s own filesystem: move matching files into the store instead of cloning them (converts an export in place). Non-matching files are left where they are]' \
                 '--mask[Only fetch objects for FDIDs whose listfile path matches (the manifest still records the whole build; the rest is listed as not-fetched in missing.tsv)]:value:_files' \
                 '*:arg:_files -/'

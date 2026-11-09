@@ -38,12 +38,13 @@ namespace {
 bool isDirFlag(const std::string& flagName) { return flagName == "--storage" || flagName == "--seed-from"; }
 
 // Commands whose last positional is a directory: extract-batch's out-dir,
-// snapshot's store, mount's mountpoint. Every other command's bare
-// positionals are files (a model/listfile path) or a FileDataID, both
-// file-completion-ish (mount's first positional, the store, completes fine
-// as a file since file completion includes directories).
+// snapshot's and builds' store, mount's mountpoint. Every other command's bare
+// positionals are files (a model/listfile path), a FileDataID or a build
+// name (changes), all file-completion-ish (mount's first positional, the
+// store, completes fine as a file since file completion includes directories).
 bool lastPositionalIsDir(const std::string& commandName) {
-    return commandName == "extract-batch" || commandName == "snapshot" || commandName == "mount";
+    return commandName == "extract-batch" || commandName == "snapshot" || commandName == "mount" ||
+           commandName == "builds";
 }
 
 // Pulls an explicit value enum out of a valueHint like "<text|csv|json>",

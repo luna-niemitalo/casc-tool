@@ -7,6 +7,38 @@ nothing here is actionable. Newest first.
 
 ---
 
+## 2026-11-09 — Multiple products (`_retail_` + `_forever_`), `builds`, `changes`
+
+The install gained a second product, `wowf` (`_forever_`, 1.60.1.70790),
+sharing `Data/` with `wow`. CascLib opened it unchanged (selection is by
+`.build.info`'s Product column). `snapshot` with no `--product` now records
+every active product, one build each. Each build's `meta.json` names its
+product, and each product has its own tag (`wowf` → `forever`). Objects stay
+product-agnostic (DESIGN.md "Products", invariant 5). New `builds` lists
+builds per product, and new `changes` diffs two builds per FDID, by default
+against the previous build of the same product, refusing cross-product pairs
+without `--cross-product`. `import` takes `--product`. The live store's four
+import records were backfilled with `"product": "wow"`.
+
+First `wowf` snapshot: 1,244,644 enUS FDIDs / 1,042,830 distinct CKeys,
+of which 824,010 (79%) were already stored from `wow`; 120,686 objects
+extracted (store 236 → 255 GB together with the `wow` resume below).
+98,794 FDIDs missing, almost all `unreadable:2` (ENOENT): listed in its ROOT
+but never downloaded by the `_forever_` client (later-expansion world
+textures, item/texturecomponents, baked NPC textures). A later re-run picks
+them up if the client fetches them.
+
+Same run, `wow` 12.1.5.70783 resumed with 37 new TACTKeys: 997 more objects,
+missing 5952 → 4950, partial stand-ins 144 → 79.
+
+Also: CascLib bumped 4d6258f → 6b889ec (build-number priority, `LPDWORD`
+on non-Windows, Overwatch keys; nothing WoW-facing). Fixed an older bug: with
+`--storage <install>/Data`, a bad `--product` was blamed on the storage path,
+because the `.build.info` check looked in `Data/` instead of the install root.
+This surfaced as the one failing integration test.
+
+---
+
 ## 2026-10-11 — `import`, path builds, and the store going live
 
 `import` ingests export trees that aren't the installed build: against

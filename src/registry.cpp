@@ -27,6 +27,12 @@ const std::map<std::string, Command>& commandTable() {
         {"import",
          {commands::runImport, commands::helpImport, commands::importSpecs,
           "ingest an export tree (with its ROOT, or as plain paths) into a store"}},
+        {"builds",
+         {commands::runBuilds, commands::helpBuilds, commands::buildsSpecs,
+          "list a store's builds, per product"}},
+        {"changes",
+         {commands::runChanges, commands::helpChanges, commands::changesSpecs,
+          "list files added/removed/changed between two stored builds"}},
     };
     return table;
 }

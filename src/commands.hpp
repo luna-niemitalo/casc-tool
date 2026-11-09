@@ -54,4 +54,12 @@ int runImport(const std::vector<std::string>& args);
 void helpImport();
 std::vector<cli::OptionSpec> importSpecs();
 
+int runBuilds(const std::vector<std::string>& args);
+void helpBuilds();
+std::vector<cli::OptionSpec> buildsSpecs();
+
+int runChanges(const std::vector<std::string>& args);
+void helpChanges();
+std::vector<cli::OptionSpec> changesSpecs();
+
 }  // namespace commands

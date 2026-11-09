@@ -42,6 +42,8 @@ add_library(casc-tool-lib STATIC
   src/cmd_snapshot.cpp
   src/cmd_import.cpp
   src/cmd_mount.cpp
+  src/cmd_builds.cpp
+  src/cmd_changes.cpp
   src/registry.cpp
   src/completion.cpp
 )

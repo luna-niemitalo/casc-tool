@@ -28,6 +28,10 @@ CKey md5Bytes(const uint8_t* data, size_t size);
 // half-written manifest/meta file. False if the write failed.
 bool writeTextAtomic(const std::filesystem::path& path, const std::string& text);
 
+// Label order: digit runs compare as numbers, so 12.1.10.x sorts after
+// 12.1.5.x and a product's builds line up oldest to newest.
+bool labelLess(const std::string& a, const std::string& b);
+
 class Store {
 public:
     explicit Store(std::filesystem::path root) : root_(std::move(root)) {}
@@ -66,7 +70,20 @@ public:
     // label is refused -- a label always means exactly one ROOT.
     bool recordRoot(const std::string& label, const std::vector<uint8_t>& root,
                     const std::vector<rootmanifest::Row>& rows, std::string* error) const;
-    std::vector<std::string> builds() const;
+    std::vector<std::string> builds() const;  // in labelLess order
+
+    // A build as typed on the command line: a label, or a tag naming one.
+    // Labels win, so a tag can never shadow a stored build.
+    std::optional<std::string> resolve(const std::string& name) const;
+
+    // builds/<label>/meta.json as key -> value, string values unquoted. Reads
+    // only the flat one-key-per-line objects snapshot and import write; empty
+    // if there is none. Records from before 2026-11-09 may lack "product".
+    std::map<std::string, std::string> meta(const std::string& label) const;
+
+    // builds/<label>/ROOT, parsed: the build's authoritative record
+    // (invariant 3). Empty with *error set for a path build or a bad ROOT.
+    std::vector<rootmanifest::Row> readRoot(const std::string& label, std::string* error) const;
 
     std::map<std::string, std::string> tags() const;
     void setTag(const std::string& name, const std::string& label) const;

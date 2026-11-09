@@ -75,6 +75,21 @@ std::unordered_map<uint32_t, CKey> select(const std::vector<Row>& rows, uint32_t
     return chosen;
 }
 
+std::vector<Diff> compare(const std::unordered_map<uint32_t, CKey>& older,
+                          const std::unordered_map<uint32_t, CKey>& newer) {
+    std::vector<Diff> out;
+    out.reserve(std::max(older.size(), newer.size()));
+    for (const auto& [fdid, a] : older) {
+        auto it = newer.find(fdid);
+        if (it == newer.end()) out.push_back({fdid, Change::Removed, a, {}});
+        else out.push_back({fdid, a == it->second ? Change::Unchanged : Change::Changed, a, it->second});
+    }
+    for (const auto& [fdid, b] : newer)
+        if (!older.count(fdid)) out.push_back({fdid, Change::Added, {}, b});
+    std::sort(out.begin(), out.end(), [](const Diff& x, const Diff& y) { return x.fdid < y.fdid; });
+    return out;
+}
+
 std::string toTsv(const std::vector<Row>& rows) {
     std::vector<const Row*> sorted;
     for (const auto& r : rows) sorted.push_back(&r);

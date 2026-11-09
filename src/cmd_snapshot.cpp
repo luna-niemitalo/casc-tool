@@ -7,6 +7,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -32,12 +33,15 @@ namespace {
 std::vector<cli::OptionSpec> specs() {
     auto s = storage::commonOptionSpecs();
     s.push_back({"--label", true, "<name>",
-                 "Build label. Default: the Version column of .build.info for --product (e.g. 12.1.0.69933)"});
+                 "Build label. Default: the Version column of .build.info for the product (e.g. 12.1.5.70783). "
+                 "Names one build, so needs --product on a multi-product install"});
     s.push_back({"--tag", true, "<name>",
-                 "Point this tag at the build. Default by --product: wow -> live, wowt -> ptr, wow_beta -> beta"});
+                 "Point this tag at the build. Default by product: wow -> live, wowf -> forever, wowt -> ptr, "
+                 "wow_beta -> beta. Needs --product on a multi-product install"});
     s.push_back({"--seed-from", true, "<dir>",
                  "An existing export tree: every file in it is hashed, and any whose content is a needed CKey "
-                 "is cloned in instead of extracted. Matching is by content, so the tree's naming doesn't matter"});
+                 "is cloned in instead of extracted. Matching is by content, so the tree's naming doesn't matter. "
+                 "Needs --product on a multi-product install"});
     s.push_back({"--seed-move", false, "",
                  "With --seed-from on the store's own filesystem: move matching files into the store instead of "
                  "cloning them (converts an export in place). Non-matching files are left where they are"});
@@ -52,40 +56,11 @@ const char* kUsage = "casc-tool snapshot <store-dir> [options]";
 // Locale the store serves (DESIGN.md: enUS default, decided 2026-10-10).
 constexpr uint32_t kStoreLocale = CASC_LOCALE_ENUS;
 
-// IN, non-critical (only names the build): .build.info is '|'-separated with a
-// "Name!TYPE:size" header row; picks the Active=1 row for `product`.
-std::string versionFromBuildInfo(const fs::path& install, const std::string& product, std::string* error) {
-    std::ifstream in(install / ".build.info");
-    std::string header;
-    if (!in || !std::getline(in, header)) {
-        *error = "couldn't read " + (install / ".build.info").string();
-        return "";
-    }
-    auto split = [](const std::string& line) {
-        std::vector<std::string> cols;
-        std::stringstream ss(line);
-        for (std::string c; std::getline(ss, c, '|');) cols.push_back(c);
-        return cols;
-    };
-    std::map<std::string, size_t> col;
-    auto names = split(header);
-    for (size_t i = 0; i < names.size(); i++) col[names[i].substr(0, names[i].find('!'))] = i;
-    for (const char* need : {"Active", "Version", "Product"})
-        if (!col.count(need)) {
-            *error = ".build.info header has no '" + std::string(need) + "' column: " + header;
-            return "";
-        }
-    for (std::string line; std::getline(in, line);) {
-        auto cells = split(line);
-        if (cells.size() < names.size()) continue;
-        if (cells[col["Active"]] == "1" && cells[col["Product"]] == product) return cells[col["Version"]];
-    }
-    *error = ".build.info has no active row for product '" + product + "' (pass --label)";
-    return "";
-}
-
+// One tag per product, so each product's newest build is reachable on its
+// own (<mnt>/live, <mnt>/forever) -- never one "latest" across products.
 std::string defaultTag(const std::string& product) {
-    static const std::map<std::string, std::string> tags = {{"wow", "live"}, {"wowt", "ptr"}, {"wow_beta", "beta"}};
+    static const std::map<std::string, std::string> tags = {
+        {"wow", "live"}, {"wowf", "forever"}, {"wowt", "ptr"}, {"wow_beta", "beta"}};
     auto it = tags.find(product);
     return it == tags.end() ? "" : it->second;
 }
@@ -153,6 +128,10 @@ void helpSnapshot() {
         "few hundred files. Re-running on the same build resumes; it never\n"
         "rewrites an object.\n"
         "\n"
+        "Without --product, records every active product of the install, one\n"
+        "build each (wow = _retail_, wowf = _forever_): they share Data/, and\n"
+        "content they share is stored once. Each build records its product.\n"
+        "\n"
         "options:\n",
         kUsage);
     cli::printOptionTable(specs());
@@ -160,37 +139,19 @@ void helpSnapshot() {
         "\n"
         "examples:\n"
         "  casc-tool snapshot /data/wow_store --storage /games/wow/Data --listfile lf.csv --keys WoW.txt\n"
-        "  casc-tool snapshot /data/wow_store ... --seed-from /data/wow_export   # first run: clone, don't extract\n");
+        "  casc-tool snapshot /data/wow_store ... --product wowf                 # only _forever_\n"
+        "  casc-tool snapshot /data/wow_store ... --product wow --seed-from /data/wow_export   # clone, don't extract\n");
 }
 
-int runSnapshot(const std::vector<std::string>& rawArgs) {
-    cli::Args args(rawArgs, specs());
-    args.requirePositionals(1, 1, kUsage);
-    store::Store st(args.positionals()[0]);
-    auto opts = storage::fromArgs(args);
-    std::string product = opts.product.value_or("wow");
-    std::string listFile = storage::listFileFromArgs(args);
-    std::string error;
+namespace {
 
-    std::string label = args.optionOr("--label", "");
-    if (label.empty()) label = versionFromBuildInfo(storage::installRoot(opts.path), product, &error);
-    if (label.empty()) {
-        std::fprintf(stderr, "error: %s\n", error.c_str());
-        return 1;
-    }
-    std::string tag = args.optionOr("--tag", defaultTag(product));
-    auto seedFrom = args.option("--seed-from");
-    auto seedMode = args.flag("--seed-move") ? store::Store::Adopt::Move : store::Store::Adopt::Clone;
-    if (args.flag("--seed-move") && !seedFrom) {
-        std::fprintf(stderr, "error: --seed-move needs --seed-from <dir>\n");
-        return 2;
-    }
-    if (seedFrom && ingest::containsStore(*seedFrom, st.root())) {
-        std::fprintf(stderr, "error: --seed-from %s contains the store %s -- seed from a subdirectory instead\n",
-                     seedFrom->c_str(), st.root().string().c_str());
-        return 2;
-    }
-    auto mask = args.option("--mask");
+// One product's build: `opts.product` is set, `label`/`tag` are final.
+int snapshotProduct(store::Store& st, const storage::OpenOptions& opts, const std::string& label,
+                    const std::string& tag, const std::string& listFile, const std::optional<std::string>& seedFrom,
+                    store::Store::Adopt seedMode, const std::optional<std::string>& mask) {
+    const std::string& product = *opts.product;
+    std::string error;
+    std::fprintf(stderr, "--- %s: build %s\n", product.c_str(), label.c_str());
 
     storage::StorageHandle hStorage;
     if (!storage::open(opts, hStorage)) return 1;
@@ -372,6 +333,77 @@ int runSnapshot(const std::vector<std::string>& rawArgs) {
     std::fprintf(stderr, "build %s: extracted %zu, %zu FDIDs missing (see missing.tsv)%s\n", label.c_str(), fetched,
                  missingCount, tag.empty() ? "" : (", tagged " + tag).c_str());
     return 0;
+}
+
+}  // namespace
+
+int runSnapshot(const std::vector<std::string>& rawArgs) {
+    cli::Args args(rawArgs, specs());
+    args.requirePositionals(1, 1, kUsage);
+    store::Store st(args.positionals()[0]);
+    auto opts = storage::fromArgs(args);
+    std::string listFile = storage::listFileFromArgs(args);
+    auto label = args.option("--label");
+    auto tag = args.option("--tag");
+    auto seedFrom = args.option("--seed-from");
+    auto seedMode = args.flag("--seed-move") ? store::Store::Adopt::Move : store::Store::Adopt::Clone;
+    auto mask = args.option("--mask");
+    if (args.flag("--seed-move") && !seedFrom) {
+        std::fprintf(stderr, "error: --seed-move needs --seed-from <dir>\n");
+        return 2;
+    }
+    if (seedFrom && ingest::containsStore(*seedFrom, st.root())) {
+        std::fprintf(stderr, "error: --seed-from %s contains the store %s -- seed from a subdirectory instead\n",
+                     seedFrom->c_str(), st.root().string().c_str());
+        return 2;
+    }
+
+    // Products sharing the install share one Data/ storage, so each is
+    // snapshotted from the same --storage; objects common to them are stored
+    // once whichever product brought them in first.
+    std::vector<storage::InstalledProduct> products;
+    if (opts.product && label) {
+        products = {{*opts.product, *label}};
+    } else {
+        std::string error;
+        fs::path install = storage::installRoot(opts.path);
+        products = storage::activeProducts(install, &error);
+        if (products.empty()) {
+            std::fprintf(stderr, "error: %s (pass --product and --label)\n", error.c_str());
+            return 1;
+        }
+        if (opts.product) {
+            auto all = products;
+            products.erase(std::remove_if(products.begin(), products.end(),
+                                          [&](const auto& p) { return p.product != *opts.product; }),
+                           products.end());
+            if (products.empty()) {
+                std::string active;
+                for (const auto& p : all) active += " " + p.product;
+                std::fprintf(stderr, "error: %s/.build.info has no active row for product '%s' (active:%s); "
+                             "pass --label to name the build yourself\n",
+                             install.c_str(), opts.product->c_str(), active.c_str());
+                return 1;
+            }
+        }
+    }
+    if (products.size() > 1 && (label || tag || seedFrom)) {
+        std::string active;
+        for (const auto& p : products) active += " " + p.product;
+        std::fprintf(stderr, "error: --label, --tag and --seed-from name one build, but this install has %zu "
+                     "active products (%s ) -- pass --product\n", products.size(), active.c_str());
+        return 2;
+    }
+
+    int status = 0;
+    for (const auto& p : products) {
+        auto one = opts;
+        one.product = p.product;
+        int rc = snapshotProduct(st, one, label.value_or(p.version), tag.value_or(defaultTag(p.product)), listFile,
+                                 seedFrom, seedMode, mask);
+        if (rc != 0) status = rc;  // keep going: one product failing shouldn't cost the others their build
+    }
+    return status;
 }
 
 }  // namespace commands

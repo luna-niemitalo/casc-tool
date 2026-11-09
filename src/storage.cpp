@@ -5,7 +5,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -83,7 +85,7 @@ bool open(const OpenOptions& opts, StorageHandle& out) {
         // failure with a perfectly valid path) used to get this exact same
         // ".build.info" hint too, which is actively wrong when the path is
         // fine (see CHANGELOG.md #4).
-        bool hasBuildInfo = std::filesystem::exists(std::filesystem::path(opts.path) / ".build.info");
+        bool hasBuildInfo = std::filesystem::exists(installRoot(opts.path) / ".build.info");
         if (!hasBuildInfo) {
             std::fprintf(stderr, "       (expecting a directory containing .build.info -- see README.md §2.1)\n");
         } else if (opts.product) {
@@ -141,7 +143,7 @@ std::vector<cli::OptionSpec> commonOptionSpecs() {
         {"--listfile", true, "<path>", "FileDataID<->path mapping, e.g. wow-listfile's community-listfile.csv. Default: listfile.csv (current directory)"},
         {"--locale", true, "<name>", "One of: all (default), none, enus, engb, dede, frfr, eses, esmx, ruru, ptbr, ptpt, itit, kokr, zhcn, zhtw, encn, entw"},
         {"--keys", true, "<path>", "Optional TACT decryption keys file (same format as wow.tools's tactkeys API: 'KeyName KeyValue' hex pairs, one per line)"},
-        {"--product", true, "<codename>", "Optional product codename, for installs with more than one flavor (e.g. 'wow', 'wowt' for PTR)"},
+        {"--product", true, "<codename>", "Optional product codename, for installs with more than one flavor (e.g. 'wow' for _retail_, 'wowf' for _forever_, 'wowt' for PTR)"},
     };
 }
 
@@ -308,6 +310,38 @@ std::filesystem::path installRoot(const std::string& storagePath) {
     if (install.filename().empty()) install = install.parent_path();  // trailing '/'
     if (install.filename() == "Data") install = install.parent_path();
     return install;
+}
+
+std::vector<InstalledProduct> activeProducts(const std::filesystem::path& install, std::string* error) {
+    std::filesystem::path file = install / ".build.info";
+    std::ifstream in(file);
+    std::string header;
+    if (!in || !std::getline(in, header)) {
+        *error = "couldn't read " + file.string();
+        return {};
+    }
+    auto split = [](const std::string& line) {
+        std::vector<std::string> cells;
+        std::stringstream ss(line);
+        for (std::string c; std::getline(ss, c, '|');) cells.push_back(c);
+        return cells;
+    };
+    auto names = split(header);
+    std::map<std::string, size_t> col;
+    for (size_t i = 0; i < names.size(); i++) col[names[i].substr(0, names[i].find('!'))] = i;
+    for (const char* need : {"Active", "Version", "Product"})
+        if (!col.count(need)) {
+            *error = file.string() + ": header has no '" + need + "' column: " + header;
+            return {};
+        }
+    std::vector<InstalledProduct> out;
+    for (std::string line; std::getline(in, line);) {
+        auto cells = split(line);
+        if (cells.size() < names.size() || cells[col["Active"]] != "1") continue;
+        out.push_back({cells[col["Product"]], cells[col["Version"]]});
+    }
+    if (out.empty()) *error = file.string() + " has no Active=1 row";
+    return out;
 }
 
 bool copyToFile(HANDLE hStorage, HANDLE hFile, const std::string& outPath, uint64_t* bytesWritten,

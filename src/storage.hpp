@@ -148,6 +148,19 @@ bool readFile(HANDLE hStorage, const std::string& idOrPath, const std::string& l
 // open fine in CascLib). Where .build.info and _retail_/Cache live.
 std::filesystem::path installRoot(const std::string& storagePath);
 
+// One Active=1 row of an install's .build.info. Products sharing one install
+// share its Data/ storage: wow = _retail_, wowf = _forever_, wowt = PTR.
+struct InstalledProduct {
+    std::string product;
+    std::string version;  // e.g. 12.1.5.70783: the default build label
+};
+
+// IN, non-critical (selects and names builds, never content): every Active=1
+// row of <install>/.build.info, in file order. The format is '|'-separated
+// with a "Name!TYPE:size" header row. Empty with *error set if the file or
+// its header is unusable.
+std::vector<InstalledProduct> activeProducts(const std::filesystem::path& install, std::string* error);
+
 // Streams an already-open file to disk in chunks, creating parent
 // directories as needed. Shared by `extract` and `extract-batch` so the
 // read/write loop and its error handling exist in exactly one place.

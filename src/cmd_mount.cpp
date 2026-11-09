@@ -142,14 +142,10 @@ struct Mount {
 
 Mount& ctx() { return *static_cast<Mount*>(fuse_get_context()->private_data); }
 
-void loadRootBuild(Mount& m, const fs::path& dir, Build& b) {
-    std::ifstream rootIn(dir / "ROOT", std::ios::binary);
-    std::vector<uint8_t> root{std::istreambuf_iterator<char>(rootIn), {}};
-    auto rows = rootmanifest::parse(root, &b.error);
-    if (!b.error.empty()) {
-        b.error = (dir / "ROOT").string() + ": " + b.error;
-        return;
-    }
+void loadRootBuild(Mount& m, const std::string& label, Build& b) {
+    fs::path dir = m.st.buildDir(label);
+    auto rows = m.st.readRoot(label, &b.error);
+    if (!b.error.empty()) return;
     auto selected = rootmanifest::select(rows, kMountLocale);
     std::ifstream missing(dir / "missing.tsv");
     std::string line;
@@ -198,7 +194,7 @@ void loadBuild(Mount& m, const std::string& label, Build& b) {
     fs::path dir = m.st.buildDir(label);
     struct stat dirStat;
     if (::stat(dir.c_str(), &dirStat) == 0) b.mtime = dirStat.st_mtim;
-    if (fs::exists(dir / "ROOT")) loadRootBuild(m, dir, b);
+    if (fs::exists(dir / "ROOT")) loadRootBuild(m, label, b);
     else if (fs::exists(dir / "files.tsv")) loadPathBuild(dir, label, b);
     else b.error = dir.string() + " has neither ROOT nor files.tsv";
     if (!b.error.empty()) return;
@@ -491,7 +487,8 @@ void helpMount() {
         "  <store-dir>    a store filled by `snapshot`\n"
         "  <mountpoint>   an empty directory you own\n"
         "\n"
-        "Layout: <mnt>/live -> builds/<label> (one link per tag: live, ptr, beta),\n"
+        "Layout: <mnt>/live -> builds/<label> (one link per tag: live, forever,\n"
+        "ptr, beta, ...),\n"
         "<mnt>/builds/<label>/<listfile path>, plus _by_fdid/<id> (stable whatever\n"
         "the listfile says), _unresolved/<id>, .listfile (what named this tree)\n"
         "and .missing (files the store doesn't have, and why). enUS files only.\n"

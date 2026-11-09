@@ -1,3 +1,5 @@
 build/
 /.direnv/
 development
+# Claude Code local state (settings, rule symlinks); can hold secrets, never commit
+.claude/

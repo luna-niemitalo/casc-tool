@@ -227,8 +227,16 @@ for a command's exact options. Summary of what each is for:
   extracting it (matching by content, so the export's naming doesn't
   matter); add `--seed-move` to move them instead, converting an export in
   place. `scripts/convert-export-to-store.nu` does that whole conversion
-  for `/media/luna/data/wow_export` (`--dry-run` first). `--tag` defaults
-  to `live` for `wow`. See DESIGN.md for the layout.
+  for `/media/luna/data/wow_export` (`--dry-run` first). See DESIGN.md for
+  the layout.
+  Without `--product` it records **every active product** of the install
+  (`.build.info` rows with `Active=1`), one build each: `wow` (`_retail_`)
+  and `wowf` (`_forever_`) share one `Data/` storage, and content they
+  share is stored once. Each build's `meta.json` names its product, and
+  each product keeps its own tag (`wow` → `live`, `wowf` → `forever`,
+  `wowt` → `ptr`, `wow_beta` → `beta`). `--label`, `--tag` and
+  `--seed-from` name a single build, so on a multi-product install they
+  need `--product`.
 
 - **`import <store-dir> <tree> --label <name>`** — ingest an export tree that
   isn't the installed build. With `--root <file>` (the tree's own ROOT),
@@ -237,11 +245,31 @@ for a command's exact options. Summary of what each is for:
   (`files.tsv`). Identical content is stored once either way; `--move` and
   `--drop-duplicates` convert the tree in place (only hash-verified files
   are moved or deleted). `--dry-run` classifies without touching anything.
+  `--product` records which product the tree came from.
 
 - **`mount <store-dir> <mountpoint>`** — browse every stored build as a
   read-only filesystem: `<mnt>/live/<listfile path>`,
-  `<mnt>/builds/<label>/…`, `_by_fdid/<id>`, `.missing`. Needs no root
-  (goes through `fusermount3`); unmount with `fusermount3 -u <mountpoint>`.
+  `<mnt>/forever/…`, `<mnt>/builds/<label>/…`, `_by_fdid/<id>`,
+  `.missing`. Needs no root (goes through `fusermount3`); unmount with
+  `fusermount3 -u <mountpoint>`.
+
+- **`builds <store-dir>`** — the store's builds, grouped by product and
+  oldest first within each: kind (`root`/`paths`), FDID / missing /
+  partial counts, when recorded, which tags point at it. `--product`
+  narrows to one history. Reads only the store's own records, so it's
+  instant.
+
+- **`changes <store-dir> [<older>] <newer>`** — per FDID, what `<newer>`
+  added, removed or changed relative to `<older>` (labels or tags; content
+  is the same exactly when the CKey is). With `<older>` omitted, compares
+  against the previous build of `<newer>`'s own product, so
+  `changes <store> live` and `changes <store> forever` each track their
+  own history. Builds of different products are refused unless
+  `--cross-product`. `--status` picks what's listed (default
+  `added,removed,changed`; all four statuses are always counted),
+  `--listfile` names rows and enables `--mask <glob>`, and
+  `--format csv|json` adds both sides' object paths for content-level
+  diffing.
 
 Every storage-touching command shares the same five options:
 `--storage`, `--listfile`, `--locale`, `--keys`, `--product` — run any
